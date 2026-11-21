@@ -4,12 +4,12 @@ import { and, count, desc, eq, gt, isNull, sql } from 'drizzle-orm';
 import type { FastifyReply, FastifyRequest } from 'fastify';
 import { db, schema } from './db.js';
 import { env } from './env.js';
-import { badRequest, unauthorized } from './errors.js';
+import { badRequest, forbidden, unauthorized } from './errors.js';
 import { sendOtpSms } from './notify.js';
 
 const OTP_TTL_MIN = 5;
 const MAX_ATTEMPTS = 5;
-const { otpCodes, users } = schema;
+const { otpCodes, users, adminUsers, agentAccounts } = schema;
 
 const hash = (s: string) => crypto.createHash('sha256').update(`${env.jwtSecret}:${s}`).digest('hex');
 
@@ -51,7 +51,15 @@ export function signAgent(agentId: string, chamberId: string) {
   return jwt.sign({ sub: agentId, chamberId, role: 'agent' }, env.jwtSecret, { expiresIn: '30d' });
 }
 
-type Claims = { sub: string; role: 'patient' | 'agent'; chamberId?: string };
+export type AdminRole = 'OWNER' | 'MANAGER' | 'SUPPORT';
+type Claims = { sub: string; role: 'patient' | 'agent' | 'admin'; chamberId?: string; adminRole?: AdminRole; iat?: number };
+
+/** True when the login was made before the password was last changed. */
+const stale = (c: Claims, changedAt: Date | null) => !!changedAt && (c.iat ?? 0) * 1000 < changedAt.getTime() - 1000;
+
+export function signAdmin(adminId: string, role: AdminRole) {
+  return jwt.sign({ sub: adminId, role: 'admin', adminRole: role }, env.jwtSecret, { expiresIn: '12h' });
+}
 
 export function readClaims(header?: string): Claims | null {
   if (!header?.startsWith('Bearer ')) return null;
@@ -66,6 +74,7 @@ declare module 'fastify' {
   interface FastifyRequest {
     userId?: string;
     agent?: { id: string; chamberId: string };
+    admin?: { id: string; role: AdminRole };
   }
 }
 
@@ -78,5 +87,23 @@ export async function requireUser(req: FastifyRequest, _rep: FastifyReply) {
 export async function requireAgent(req: FastifyRequest, _rep: FastifyReply) {
   const c = readClaims(req.headers.authorization);
   if (!c || c.role !== 'agent' || !c.chamberId) throw unauthorized();
+  // A turned-off login or a changed password signs the counter out at once.
+  const [a] = await db.select({ active: agentAccounts.active, changed: agentAccounts.passwordChangedAt }).from(agentAccounts).where(eq(agentAccounts.id, c.sub));
+  if (!a || !a.active || stale(c, a.changed)) throw unauthorized();
   req.agent = { id: c.sub, chamberId: c.chamberId };
+}
+
+const RANK: Record<AdminRole, number> = { SUPPORT: 1, MANAGER: 2, OWNER: 3 };
+
+/** Admin panel access. Pass the lowest role allowed; higher roles are allowed too. */
+export function requireAdmin(min: AdminRole = 'SUPPORT') {
+  return async (req: FastifyRequest, _rep: FastifyReply) => {
+    const c = readClaims(req.headers.authorization);
+    if (!c || c.role !== 'admin' || !c.adminRole) throw unauthorized();
+    // The role is re-read so a removed or downgraded admin loses access at once, not when the token expires.
+    const [a] = await db.select({ role: adminUsers.role, active: adminUsers.active, changed: adminUsers.passwordChangedAt }).from(adminUsers).where(eq(adminUsers.id, c.sub));
+    if (!a || !a.active || stale(c, a.changed)) throw unauthorized();
+    if (RANK[a.role] < RANK[min]) throw forbidden();
+    req.admin = { id: c.sub, role: a.role };
+  };
 }

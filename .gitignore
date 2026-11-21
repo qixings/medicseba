@@ -11,3 +11,4 @@ android/
 .DS_Store
 .seeded
 web/
+apps/api/uploads/

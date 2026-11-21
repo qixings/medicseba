@@ -21,6 +21,8 @@ export const env = {
   rescheduleCutoffMinutes: Number(process.env.RESCHEDULE_CUTOFF_MINUTES ?? 120),
   avgMinutesPerPatient: Number(process.env.AVG_MINUTES_PER_PATIENT ?? 7),
   corsOrigin: process.env.CORS_ORIGIN ?? '*',
+  /** Where uploaded photos are kept. */
+  uploadDir: process.env.UPLOAD_DIR ?? new URL('../uploads', import.meta.url).pathname,
   /** Test server: shows the OTP on screen and allows test payments, even in production. */
   demoMode: process.env.DEMO_MODE === '1',
 };

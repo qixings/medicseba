@@ -7,7 +7,7 @@ Online token booking for doctors' chambers and pharmacies in Kailashahar. Patien
 | API | `apps/api` | Node 22, Fastify, Drizzle ORM, PostgreSQL, socket.io |
 | Patient app | `apps/patient` | Expo (Android, iPhone, web), Expo Router, React Query |
 | Chamber counter app | `apps/agent` | Expo (Android, iPad, web at `/agent`), works offline |
-| Admin panel | next | |
+| Admin panel | `apps/admin` | Vite + React at `/admin` (owner, manager, support roles) |
 
 ## Run it locally
 
@@ -90,7 +90,6 @@ Phone apps: `npx eas-cli@latest build --platform android` (and `ios`). Linking t
 
 ## Still to do
 
-- Chamber agent app (offline-first) and admin panel
 - Brand name, domain, app icons
 - PDF receipts, ratings, WhatsApp alerts
 - Razorpay, MSG91 and store accounts once the business is registered

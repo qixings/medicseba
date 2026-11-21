@@ -257,3 +257,75 @@ test('agent counter: board, walk-in retry, safe next, missed and recall, close a
   assert.ok(list.body.sessions.some((x: { id: string }) => x.id === s.id));
 });
 
+
+test('admin: roles, doctor and schedule, session limits, refund, settlement', async () => {
+  const bcrypt = (await import('bcryptjs')).default;
+  const hash = await bcrypt.hash('secret123', 4);
+  await db.insert(schema.adminUsers).values([
+    { username: 'owner1', name: 'Owner', role: 'OWNER', passwordHash: hash },
+    { username: 'support1', name: 'Support', role: 'SUPPORT', passwordHash: hash },
+  ]).onConflictDoNothing();
+  const own = (await call('POST', '/admin/login', { username: 'owner1', password: 'secret123' })).body.token as string;
+  const sup = (await call('POST', '/admin/login', { username: 'support1', password: 'secret123' })).body.token as string;
+  assert.equal((await call('POST', '/admin/login', { username: 'owner1', password: 'nope' })).status, 401);
+
+  // Support can look but not change.
+  assert.equal((await call('GET', '/admin/dashboard', undefined, sup)).status, 200);
+  const spec = (await call('GET', '/admin/specialties', undefined, sup)).body[0];
+  assert.equal((await call('POST', '/admin/doctors', { name: 'Dr. Test', degrees: 'MBBS', specialtyId: spec.id, experienceYears: 3, consultFee: 300, languages: ['Bengali'], bookingWindowDays: 7 }, sup)).status, 403);
+  // Patients and counters cannot use admin at all.
+  assert.equal((await call('GET', '/admin/dashboard', undefined, agentToken)).status, 401);
+
+  const doc = await call('POST', '/admin/doctors', { name: 'Dr. Test Sen', degrees: 'MBBS', specialtyId: spec.id, experienceYears: 3, consultFee: 300, languages: ['Bengali'], bookingWindowDays: 7 }, own);
+  assert.equal(doc.status, 200, JSON.stringify(doc.body));
+  const chamber = (await call('GET', '/admin/chambers', undefined, own)).body[0];
+  const sc = await call('POST', `/admin/doctors/${doc.body.id}/schedules`, { chamberId: chamber.id, weekdays: [0, 1, 2, 3, 4, 5, 6], startTime: '09:00', tokenLimit: 10, onlineShare: 50 }, own);
+  assert.equal(sc.status, 200, JSON.stringify(sc.body));
+  const day = addDays(istDate(), 2);
+  let list = (await call('GET', `/admin/sessions?date=${day}&chamberId=${chamber.id}`, undefined, own)).body as { id: string; doctor: { id: string }; tokenLimit: number; onlineLimit: number }[];
+  let mine = list.find((x) => x.doctor.id === doc.body.id)!;
+  assert.equal(mine.tokenLimit, 10);
+  assert.equal(mine.onlineLimit, 5);
+
+  // A patient books, then limits cannot go below that, and the schedule change keeps the booking.
+  const u = await login('9600000001', 'Admin Test');
+  const b = await book(u.token, mine.id, u.memberId);
+  assert.equal(b.status, 200);
+  assert.equal((await call('PATCH', `/admin/sessions/${mine.id}`, { onlineLimit: 0 }, own)).status, 409);
+  assert.equal((await call('PATCH', `/admin/sessions/${mine.id}`, { tokenLimit: 20, onlineLimit: 15 }, own)).body.onlineLimit, 15);
+  const off = await call('PATCH', `/admin/schedules/${sc.body.schedule.id}`, { weekdays: [weekdayOf(addDays(day, 1))] }, own);
+  assert.ok(off.body.result.kept >= 1, 'a booked day is not cancelled');
+  list = (await call('GET', `/admin/sessions?date=${day}&chamberId=${chamber.id}`, undefined, own)).body;
+  mine = list.find((x) => x.doctor.id === doc.body.id)!;
+  assert.ok(mine, 'booked sitting still there');
+
+  // Search and refund.
+  const found = await call('GET', '/admin/bookings?q=9600000001', undefined, sup);
+  assert.equal(found.body.length, 1);
+  assert.equal((await call('POST', `/admin/bookings/${found.body[0].id}/refund`, { reason: 'test' }, sup)).status, 403);
+  const rf = await call('POST', `/admin/bookings/${found.body[0].id}/refund`, { reason: 'Patient asked' }, own);
+  assert.equal(rf.status, 200, JSON.stringify(rf.body));
+  const [sAfter] = await db.select().from(schema.sessions).where(eq(schema.sessions.id, mine.id));
+  assert.equal(sAfter.onlineTaken, 0, 'refund frees the place');
+
+  // Settlement for a past day with one paid booking.
+  const past = addDays(istDate(), -1);
+  const ses = (await sessionsOf('Dr. Riya Chakraborty')).find((x) => x.date >= addDays(istDate(), 1))!;
+  const u2 = await login('9600000002', 'Settle Test');
+  const b2 = await book(u2.token, ses.id, u2.memberId);
+  assert.equal(b2.status, 200);
+  await db.update(schema.sessions).set({ date: past }).where(eq(schema.sessions.id, ses.id));
+  const gen = await call('POST', '/admin/settlements/generate', { date: past }, own);
+  assert.equal(gen.status, 200);
+  const st = await call('GET', `/admin/settlements?date=${past}`, undefined, own);
+  const row = st.body.saved.find((x: { chamberId: string }) => x.chamberId === ses.chamberId);
+  assert.ok(row.bookings >= 1);
+  assert.equal(row.amount, row.bookings * 55, 'chamber gets ₹55 per paid booking');
+  assert.equal(row.platformFees, row.bookings * 10, 'platform keeps ₹10 per paid booking');
+  const paid = await call('POST', `/admin/settlements/${row.id}/paid`, { reference: 'UTR123456' }, own);
+  assert.equal(paid.body.status, 'PAID');
+  assert.equal((await call('POST', `/admin/settlements/${row.id}/paid`, { reference: 'again' }, own)).status, 409);
+  assert.equal((await call('POST', '/admin/settlements/generate', { date: istDate() }, own)).status, 409, 'today cannot be settled yet');
+});
+
+function weekdayOf(date: string) { return new Date(`${date}T00:00:00Z`).getUTCDay(); }

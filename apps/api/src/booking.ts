@@ -175,7 +175,7 @@ export async function cancelBooking(userId: string, tokenId: string) {
   return { ok: true, refunded: false };
 }
 
-async function refundToken(tokenId: string) {
+export async function refundToken(tokenId: string) {
   const [pay] = await db.select().from(payments).where(eq(payments.tokenId, tokenId));
   if (pay && pay.status !== 'REFUNDED') {
     const refundId = await refund(pay.providerPaymentId, pay.amount);

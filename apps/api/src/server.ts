@@ -9,6 +9,7 @@ import { patientRoutes } from './routes/patient.js';
 import { agentRoutes } from './routes/agent.js';
 import { webhookRoutes } from './routes/webhooks.js';
 import { payRoutes } from './routes/pay.js';
+import { adminRoutes, uploadRoutes } from './routes/admin.js';
 
 export async function buildApp() {
   const app = Fastify({ logger: env.nodeEnv !== 'test', trustProxy: true });
@@ -31,5 +32,7 @@ export async function buildApp() {
   await app.register(agentRoutes, { prefix: '/v1' });
   await app.register(webhookRoutes, { prefix: '/v1' });
   await app.register(payRoutes, { prefix: '/v1' });
+  await app.register(adminRoutes, { prefix: '/v1' });
+  await app.register(uploadRoutes);
   return app;
 }

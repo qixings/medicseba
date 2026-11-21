@@ -4,6 +4,7 @@ import { env } from './env.js';
 import { attachIo } from './queue.js';
 import { ensureSessions } from './sessions.js';
 import { releaseExpiredHolds } from './booking.js';
+import { autoSettle } from './admin-logic.js';
 
 const app = await buildApp();
 await app.listen({ port: env.port, host: '0.0.0.0' });
@@ -15,3 +16,6 @@ attachIo(io);
 await ensureSessions(undefined, 35);
 setInterval(() => ensureSessions(undefined, 35).catch((e) => app.log.error(e)), 60 * 60_000);
 setInterval(() => releaseExpiredHolds().catch((e) => app.log.error(e)), 30_000);
+// Settle yesterday's money per chamber (safe to repeat; paid rows are never touched).
+setInterval(() => autoSettle().catch((e) => app.log.error(e)), 60 * 60_000);
+autoSettle().catch((e) => app.log.error(e));

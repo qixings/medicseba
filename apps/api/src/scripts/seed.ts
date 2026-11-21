@@ -3,7 +3,7 @@ import bcrypt from 'bcryptjs';
 import { and, eq } from 'drizzle-orm';
 import { db, pool, schema } from '../db.js';
 
-const { specialties, chambers, doctors, schedules, agentAccounts } = schema;
+const { specialties, chambers, doctors, schedules, agentAccounts, adminUsers } = schema;
 const MON_SAT = [1, 2, 3, 4, 5, 6]; // 0 Sun ... 6 Sat
 
 const specs: [string, string, string][] = [
@@ -53,6 +53,10 @@ export async function seed() {
   const hash = await bcrypt.hash('demo1234', 10);
   for (const [username, key] of [['citymedicos', 'city'], ['lifeline', 'lifeline'], ['senclinic', 'sen'], ['royskin', 'roy']] as const) {
     await db.insert(agentAccounts).values({ username, passwordHash: hash, chamberId: ch[key] }).onConflictDoNothing();
+  }
+  // Sample admin for the test server only. Create real admins with src/scripts/create-admin.ts.
+  {
+    await db.insert(adminUsers).values({ username: 'admin', name: 'Demo Admin', role: 'OWNER', passwordHash: hash }).onConflictDoNothing();
   }
 }
 

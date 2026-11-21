@@ -11,6 +11,8 @@ export const tokenSource = pgEnum('token_source', ['ONLINE', 'WALKIN']);
 export const tokenState = pgEnum('token_state', ['HELD', 'BOOKED', 'ARRIVED', 'SERVING', 'DONE', 'MISSED', 'NO_SHOW', 'CANCELLED', 'REFUNDED', 'MOVED', 'EXPIRED']);
 export const paymentStatus = pgEnum('payment_status', ['CREATED', 'PAID', 'FAILED', 'REFUNDED']);
 export const gender = pgEnum('gender', ['MALE', 'FEMALE', 'OTHER']);
+export const adminRole = pgEnum('admin_role', ['OWNER', 'MANAGER', 'SUPPORT']);
+export const settlementStatus = pgEnum('settlement_status', ['PENDING', 'PAID']);
 
 export const users = pgTable('users', {
   id: id(),
@@ -163,6 +165,8 @@ export const agentAccounts = pgTable('agent_accounts', {
   passwordHash: text('password_hash').notNull(),
   active: boolean('active').notNull().default(true),
   createdAt: createdAt(),
+  /** Logins made before this time stop working (password changed or login turned off). */
+  passwordChangedAt: timestamp('password_changed_at', { withTimezone: true }),
 });
 
 export const notifications = pgTable('notifications', {
@@ -183,3 +187,43 @@ export type Chamber = typeof chambers.$inferSelect;
 export type Specialty = typeof specialties.$inferSelect;
 export type TokenState = Token['state'];
 export type DoctorStatus = Session['doctorStatus'];
+
+/** People who run MedicSeba. OWNER: everything. MANAGER: doctors, chambers, sittings, refunds. SUPPORT: look up and help. */
+export const adminUsers = pgTable('admin_users', {
+  id: id(),
+  username: text('username').notNull().unique(),
+  name: text('name').notNull(),
+  passwordHash: text('password_hash').notNull(),
+  role: adminRole('role').notNull().default('SUPPORT'),
+  active: boolean('active').notNull().default(true),
+  lastLoginAt: timestamp('last_login_at', { withTimezone: true }),
+  createdAt: createdAt(),
+  passwordChangedAt: timestamp('password_changed_at', { withTimezone: true }),
+});
+
+/** What MedicSeba owes each chamber for one day of online bookings (their booking fee share). */
+export const settlements = pgTable('settlements', {
+  id: id(),
+  chamberId: text('chamber_id').notNull().references(() => chambers.id),
+  date: text('date').notNull(),
+  bookings: integer('bookings').notNull(),
+  bookingFees: integer('booking_fees').notNull(),
+  platformFees: integer('platform_fees').notNull(),
+  refunds: integer('refunds').notNull().default(0),
+  amount: integer('amount').notNull(),
+  status: settlementStatus('status').notNull().default('PENDING'),
+  reference: text('reference'),
+  paidAt: timestamp('paid_at', { withTimezone: true }),
+  paidBy: text('paid_by'),
+  createdAt: createdAt(),
+}, (t) => [uniqueIndex('settlement_chamber_date').on(t.chamberId, t.date)]);
+
+/** Who changed what in the admin panel. */
+export const auditLog = pgTable('audit_log', {
+  id: id(),
+  adminId: text('admin_id').notNull(),
+  action: text('action').notNull(),
+  target: text('target'),
+  data: jsonb('data').notNull().default({}),
+  createdAt: createdAt(),
+}, (t) => [index('audit_created_idx').on(t.createdAt)]);

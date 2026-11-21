@@ -81,4 +81,6 @@ systemctl reload nginx
 say "Done"
 echo "Open https://$DOMAIN on your phone (after the Cloudflare DNS record is added)."
 echo "Counter app: https://$DOMAIN/agent (sample login citymedicos / demo1234)."
+echo "Admin panel: https://$DOMAIN/admin. Create your login with:"
+echo "  cd $APP_DIR/apps/api && npx tsx src/scripts/create-admin.ts <username> \"<Your name>\" OWNER"
 echo "The login code shows on screen because DEMO_MODE=1. Payments are test payments."

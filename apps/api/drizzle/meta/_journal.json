@@ -15,6 +15,20 @@
       "when": 1795254757388,
       "tag": "0001_agent_client_ref",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1795259232372,
+      "tag": "0002_admin",
+      "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "7",
+      "when": 1795259640830,
+      "tag": "0003_password_changed",
+      "breakpoints": true
     }
   ]
 }
