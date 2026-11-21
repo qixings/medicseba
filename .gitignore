@@ -1,0 +1,11 @@
+node_modules/
+dist/
+.expo/
+web-build/
+*.log
+.env
+!apps/patient/.env.example
+!apps/api/.env.example
+ios/
+android/
+.DS_Store

@@ -1,0 +1,9 @@
+{
+  "name": "doctor-token",
+  "private": true,
+  "scripts": {
+    "api": "npm --prefix apps/api run dev",
+    "app": "npm --prefix apps/patient run start",
+    "test": "npm --prefix apps/api test"
+  }
+}

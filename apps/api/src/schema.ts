@@ -1,0 +1,183 @@
+import { boolean, doublePrecision, index, integer, jsonb, pgEnum, pgTable, text, timestamp, uniqueIndex } from 'drizzle-orm/pg-core';
+import { randomUUID } from 'node:crypto';
+
+const id = () => text('id').primaryKey().$defaultFn(() => randomUUID());
+const createdAt = () => timestamp('created_at', { withTimezone: true }).notNull().defaultNow();
+
+export const chamberKind = pgEnum('chamber_kind', ['PHARMACY', 'OWN']);
+export const sessionStatus = pgEnum('session_status', ['OPEN', 'CLOSED', 'CANCELLED', 'ENDED']);
+export const doctorStatus = pgEnum('doctor_status', ['ON_TIME', 'LATE', 'ARRIVED', 'BREAK', 'NOT_COMING', 'ENDED']);
+export const tokenSource = pgEnum('token_source', ['ONLINE', 'WALKIN']);
+export const tokenState = pgEnum('token_state', ['HELD', 'BOOKED', 'ARRIVED', 'SERVING', 'DONE', 'MISSED', 'NO_SHOW', 'CANCELLED', 'REFUNDED', 'MOVED', 'EXPIRED']);
+export const paymentStatus = pgEnum('payment_status', ['CREATED', 'PAID', 'FAILED', 'REFUNDED']);
+export const gender = pgEnum('gender', ['MALE', 'FEMALE', 'OTHER']);
+
+export const users = pgTable('users', {
+  id: id(),
+  phone: text('phone').notNull().unique(),
+  name: text('name'),
+  language: text('language').notNull().default('en'),
+  pushTokens: text('push_tokens').array().notNull().default([]),
+  createdAt: createdAt(),
+});
+
+export const otpCodes = pgTable('otp_codes', {
+  id: id(),
+  phone: text('phone').notNull(),
+  codeHash: text('code_hash').notNull(),
+  expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
+  attempts: integer('attempts').notNull().default(0),
+  usedAt: timestamp('used_at', { withTimezone: true }),
+  createdAt: createdAt(),
+}, (t) => [index('otp_phone_idx').on(t.phone, t.createdAt)]);
+
+export const familyMembers = pgTable('family_members', {
+  id: id(),
+  userId: text('user_id').notNull().references(() => users.id),
+  name: text('name').notNull(),
+  age: integer('age').notNull(),
+  gender: gender('gender').notNull(),
+  relation: text('relation'),
+  isSelf: boolean('is_self').notNull().default(false),
+  deletedAt: timestamp('deleted_at', { withTimezone: true }),
+  createdAt: createdAt(),
+});
+
+export const specialties = pgTable('specialties', {
+  id: id(),
+  slug: text('slug').notNull().unique(),
+  name: text('name').notNull(),
+  icon: text('icon').notNull().default('steth'),
+  order: integer('order').notNull().default(0),
+});
+
+export const doctors = pgTable('doctors', {
+  id: id(),
+  name: text('name').notNull(),
+  photoUrl: text('photo_url'),
+  degrees: text('degrees').notNull(),
+  specialtyId: text('specialty_id').notNull().references(() => specialties.id),
+  experienceYears: integer('experience_years').notNull().default(0),
+  consultFee: integer('consult_fee').notNull().default(0),
+  languages: text('languages').array().notNull().default([]),
+  bio: text('bio').notNull().default(''),
+  bookingWindowDays: integer('booking_window_days').notNull().default(7),
+  ratingSum: integer('rating_sum').notNull().default(0),
+  ratingCount: integer('rating_count').notNull().default(0),
+  visible: boolean('visible').notNull().default(true),
+  createdAt: createdAt(),
+});
+
+export const chambers = pgTable('chambers', {
+  id: id(),
+  name: text('name').notNull(),
+  kind: chamberKind('kind').notNull().default('PHARMACY'),
+  photos: text('photos').array().notNull().default([]),
+  address: text('address').notNull(),
+  area: text('area').notNull(),
+  landmark: text('landmark').notNull().default(''),
+  lat: doublePrecision('lat'),
+  lng: doublePrecision('lng'),
+  phone: text('phone').notNull().default(''),
+  openingHours: text('opening_hours').notNull().default(''),
+  bookingFee: integer('booking_fee').notNull().default(55),
+  platformFee: integer('platform_fee').notNull().default(10),
+  visible: boolean('visible').notNull().default(true),
+  createdAt: createdAt(),
+});
+
+export const schedules = pgTable('schedules', {
+  id: id(),
+  doctorId: text('doctor_id').notNull().references(() => doctors.id),
+  chamberId: text('chamber_id').notNull().references(() => chambers.id),
+  weekdays: integer('weekdays').array().notNull(),
+  startTime: text('start_time').notNull(),
+  tokenLimit: integer('token_limit').notNull().default(40),
+  onlineShare: integer('online_share').notNull().default(60),
+  active: boolean('active').notNull().default(true),
+});
+
+export const sessions = pgTable('sessions', {
+  id: id(),
+  scheduleId: text('schedule_id').notNull().references(() => schedules.id),
+  doctorId: text('doctor_id').notNull().references(() => doctors.id),
+  chamberId: text('chamber_id').notNull().references(() => chambers.id),
+  date: text('date').notNull(),
+  startTime: text('start_time').notNull(),
+  startsAt: timestamp('starts_at', { withTimezone: true }).notNull(),
+  tokenLimit: integer('token_limit').notNull(),
+  onlineLimit: integer('online_limit').notNull(),
+  onlineTaken: integer('online_taken').notNull().default(0),
+  counterTaken: integer('counter_taken').notNull().default(0),
+  nextNumber: integer('next_number').notNull().default(1),
+  servingNumber: integer('serving_number').notNull().default(0),
+  status: sessionStatus('status').notNull().default('OPEN'),
+  doctorStatus: doctorStatus('doctor_status').notNull().default('ON_TIME'),
+  lateMinutes: integer('late_minutes').notNull().default(0),
+  arrivedAt: timestamp('arrived_at', { withTimezone: true }),
+  createdAt: createdAt(),
+}, (t) => [uniqueIndex('session_schedule_date').on(t.scheduleId, t.date), index('session_date_idx').on(t.date)]);
+
+export const tokens = pgTable('tokens', {
+  id: id(),
+  sessionId: text('session_id').notNull().references(() => sessions.id),
+  number: integer('number'),
+  source: tokenSource('source').notNull(),
+  state: tokenState('state').notNull(),
+  userId: text('user_id').references(() => users.id),
+  memberId: text('member_id').references(() => familyMembers.id),
+  patientName: text('patient_name').notNull(),
+  patientAge: integer('patient_age'),
+  patientGender: gender('patient_gender'),
+  phone: text('phone'),
+  holdExpiresAt: timestamp('hold_expires_at', { withTimezone: true }),
+  rescheduleUsed: boolean('reschedule_used').notNull().default(false),
+  movedFromId: text('moved_from_id'),
+  absentChoice: text('absent_choice'),
+  servedAt: timestamp('served_at', { withTimezone: true }),
+  doneAt: timestamp('done_at', { withTimezone: true }),
+  createdAt: createdAt(),
+}, (t) => [uniqueIndex('token_session_number').on(t.sessionId, t.number), index('token_user_idx').on(t.userId)]);
+
+export const payments = pgTable('payments', {
+  id: id(),
+  tokenId: text('token_id').notNull().unique().references(() => tokens.id),
+  amount: integer('amount').notNull(),
+  bookingFee: integer('booking_fee').notNull(),
+  platformFee: integer('platform_fee').notNull(),
+  provider: text('provider').notNull(),
+  providerOrderId: text('provider_order_id').notNull().unique(),
+  providerPaymentId: text('provider_payment_id'),
+  providerRefundId: text('provider_refund_id'),
+  status: paymentStatus('status').notNull().default('CREATED'),
+  createdAt: createdAt(),
+  updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow().$onUpdate(() => new Date()),
+});
+
+export const agentAccounts = pgTable('agent_accounts', {
+  id: id(),
+  chamberId: text('chamber_id').notNull().references(() => chambers.id),
+  username: text('username').notNull().unique(),
+  passwordHash: text('password_hash').notNull(),
+  active: boolean('active').notNull().default(true),
+  createdAt: createdAt(),
+});
+
+export const notifications = pgTable('notifications', {
+  id: id(),
+  userId: text('user_id').notNull().references(() => users.id),
+  kind: text('kind').notNull(),
+  title: text('title').notNull(),
+  body: text('body').notNull(),
+  data: jsonb('data').$type<Record<string, unknown>>().notNull().default({}),
+  read: boolean('read').notNull().default(false),
+  createdAt: createdAt(),
+}, (t) => [index('notification_user_idx').on(t.userId, t.createdAt)]);
+
+export type Session = typeof sessions.$inferSelect;
+export type Token = typeof tokens.$inferSelect;
+export type Doctor = typeof doctors.$inferSelect;
+export type Chamber = typeof chambers.$inferSelect;
+export type Specialty = typeof specialties.$inferSelect;
+export type TokenState = Token['state'];
+export type DoctorStatus = Session['doctorStatus'];
