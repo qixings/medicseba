@@ -38,7 +38,7 @@ export default function Home() {
         <TextInput
           accessibilityLabel={t('search')}
           placeholder={t('search')}
-          placeholderTextColor={C.faint}
+          placeholderTextColor={C.placeholder}
           value={search}
           onChangeText={setSearch}
           returnKeyType="search"

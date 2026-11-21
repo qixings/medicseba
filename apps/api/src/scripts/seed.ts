@@ -56,8 +56,11 @@ export async function seed() {
   }
 }
 
+import { setDemoPhotos } from './demo-photos.js';
+
 if (process.argv[1]?.endsWith('seed.ts') || process.argv[1]?.endsWith('seed.js')) {
   await seed();
+  await setDemoPhotos();
   console.log('Seeded sample data');
   await pool.end();
 }

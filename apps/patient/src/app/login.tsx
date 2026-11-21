@@ -66,7 +66,7 @@ export default function Login() {
               autoComplete="tel"
               maxLength={11}
               placeholder="98765 43210"
-              placeholderTextColor={C.faint}
+              placeholderTextColor={C.placeholder}
               onSubmitEditing={() => valid && send()}
               style={[F.bold, num, { flex: 1, minWidth: 0, height: 56, paddingHorizontal: 16, borderRadius: 16, borderWidth: 1, borderColor: C.field, fontSize: 19, color: C.ink }]}
             />

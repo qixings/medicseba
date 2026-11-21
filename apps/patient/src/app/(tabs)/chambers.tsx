@@ -24,7 +24,7 @@ export default function Chambers() {
       <H1 style={{ marginTop: 30 }}>{t('chambers')}</H1>
       <View style={[card, { marginTop: 14, height: 46, borderRadius: 14, flexDirection: 'row', alignItems: 'center', gap: 10, paddingHorizontal: 16 }]}>
         <Icon name="search" size={18} color={C.faint} width={2.2} />
-        <TextInput accessibilityLabel={t('search')} placeholder={t('search')} placeholderTextColor={C.faint} value={q} onChangeText={setQ}
+        <TextInput accessibilityLabel={t('search')} placeholder={t('search')} placeholderTextColor={C.placeholder} value={q} onChangeText={setQ}
           style={[F.regular, { flex: 1, fontSize: 17, color: C.ink, height: 44 }]} />
       </View>
       <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginHorizontal: -18, marginTop: 12 }} contentContainerStyle={{ paddingHorizontal: 18, gap: 8 }}>

@@ -6,6 +6,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import * as Haptics from 'expo-haptics';
 import { C, F, S, card, num } from '@/lib/theme';
 import { useT } from '@/lib/i18n';
+import { mediaUrl } from '@/lib/api';
 import { Glass } from './Glass';
 import { Icon, type IconName } from './Icon';
 
@@ -117,7 +118,9 @@ export function initials(name: string) {
 
 export function Avatar({ name, uri, size = 48, radius, bg = C.tint, fg = C.link }: { name: string; uri?: string | null; size?: number; radius?: number; bg?: string; fg?: string }) {
   const r = radius ?? size / 2;
-  if (uri) return <Image source={uri} style={{ width: size, height: size, borderRadius: r, backgroundColor: bg }} contentFit="cover" accessibilityLabel={name} />;
+  const src = mediaUrl(uri);
+  // Cutout photos sit on the tint colour, framed from the top so the face shows.
+  if (src) return <Image source={src} style={{ width: size, height: size, borderRadius: r, backgroundColor: bg === C.brand ? C.tint : bg }} contentFit="cover" contentPosition="top" accessibilityLabel={name} />;
   return (
     <View style={{ width: size, height: size, borderRadius: r, backgroundColor: bg, alignItems: 'center', justifyContent: 'center' }}>
       <T w="heavy" size={Math.round(size * 0.36)} color={fg}>{initials(name)}</T>
@@ -164,7 +167,7 @@ export function Field({ label, style, ...p }: TextInputProps & { label: string }
       <TextInput
         {...p}
         accessibilityLabel={label}
-        placeholderTextColor={C.faint}
+        placeholderTextColor={C.placeholder}
         onFocus={(e) => { setFocus(true); p.onFocus?.(e); }}
         onBlur={(e) => { setFocus(false); p.onBlur?.(e); }}
         style={[F.bold, { height: 54, borderRadius: 16, borderWidth: focus ? 2 : 1, borderColor: focus ? C.brand : C.field, backgroundColor: C.white, paddingHorizontal: 16, fontSize: 18, color: C.ink }, style]}

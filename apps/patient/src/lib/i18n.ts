@@ -3,7 +3,7 @@ import { create } from './store';
 export type Lang = 'en' | 'bn';
 
 const en = {
-  brand: 'Doctor Token',
+  brand: 'MedicSeba',
   langToggle: 'বাংলা',
   loginTitle: "Your doctor's token, booked from home",
   loginSub: "Pay online, get your number, and see how many patients are ahead. Walk in when it's your turn.",
@@ -145,7 +145,7 @@ const en = {
 type Dict = typeof en;
 
 const bn: Dict = {
-  brand: 'ডক্টর টোকেন',
+  brand: 'মেডিকসেবা',
   langToggle: 'English',
   loginTitle: 'ঘরে বসেই ডাক্তারের টোকেন বুক করুন',
   loginSub: 'অনলাইনে টাকা দিন, নম্বর পান, আর দেখুন আপনার আগে কতজন। আপনার পালা এলে চেম্বারে আসুন।',

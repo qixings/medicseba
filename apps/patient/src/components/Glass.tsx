@@ -35,8 +35,8 @@ export function Glass({ style, children, dark = false, tint, intensity = 40 }: {
 }
 
 const glassRim = (dark: boolean): ViewStyle => ({
-  borderWidth: StyleSheet.hairlineWidth * 2,
-  borderTopColor: dark ? 'rgba(255,255,255,0.45)' : 'rgba(255,255,255,0.95)',
+  borderWidth: dark ? 1 : StyleSheet.hairlineWidth * 2,
+  borderTopColor: dark ? 'rgba(255,255,255,0.32)' : 'rgba(255,255,255,0.95)',
   borderLeftColor: dark ? 'rgba(255,255,255,0.18)' : 'rgba(255,255,255,0.7)',
   borderRightColor: dark ? 'rgba(255,255,255,0.18)' : 'rgba(255,255,255,0.7)',
   borderBottomColor: dark ? 'rgba(255,255,255,0.1)' : 'rgba(255,255,255,0.4)',

@@ -16,7 +16,9 @@ const TABS: Record<string, { label: Key; icon: IconName }> = {
 };
 
 const PAD = 12;
-const LENS_H = 56;
+const LENS_H = 56; // tap area
+const PILL_H = 48; // the visible glass pill
+const INSET = 6; // pill sits a little inside each tab
 const FAST = { duration: 260, easing: Easing.bezier(0.7, 0, 0.25, 1) };
 const SLOW = { duration: 470, easing: Easing.bezier(0.6, 0, 0.2, 1) };
 
@@ -50,11 +52,12 @@ export function LiquidTabBar({ state, navigateToTab, insets }: BottomTabBarProps
   }, [state.index, item, L, R]);
 
   const lens = useAnimatedStyle(() => {
-    const width = Math.max(1, R.value - L.value);
-    const stretch = item ? width / item : 1;
+    const width = Math.max(1, R.value - L.value - INSET * 2);
+    const rest = item - INSET * 2;
+    const stretch = rest > 0 ? width / rest : 1;
     // Keep the area roughly the same: wider means thinner, like a real drop.
-    const h = LENS_H / Math.sqrt(Math.max(1, stretch));
-    return { left: L.value, width, height: h, top: 6 + (LENS_H - h) / 2, transform: [{ scale: press.value }] };
+    const h = PILL_H / Math.sqrt(Math.max(1, stretch));
+    return { left: L.value + INSET, width, height: h, top: 6 + (LENS_H - h) / 2, transform: [{ scale: press.value }] };
   });
 
   return (
@@ -68,7 +71,7 @@ export function LiquidTabBar({ state, navigateToTab, insets }: BottomTabBarProps
       }}
     >
       {item ? (
-        <Animated.View pointerEvents="none" style={[{ position: 'absolute', borderRadius: 999, overflow: 'hidden', shadowColor: C.brand, shadowOpacity: 0.45, shadowRadius: 9, shadowOffset: { width: 0, height: 6 } }, lens]}>
+        <Animated.View pointerEvents="none" style={[{ position: 'absolute', borderRadius: 999, overflow: 'hidden' }, lens]}>
           <Glass dark style={{ flex: 1, borderRadius: 999 }} tint="rgba(43,63,66,0.55)" intensity={20} />
         </Animated.View>
       ) : null}

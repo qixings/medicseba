@@ -2,6 +2,7 @@ import { View } from 'react-native';
 import { Image } from 'expo-image';
 import { router, useLocalSearchParams } from 'expo-router';
 import { useApi } from '@/lib/query';
+import { mediaUrl } from '@/lib/api';
 import { dayName, parts, useT } from '@/lib/i18n';
 import { C, S } from '@/lib/theme';
 import type { DoctorDetail } from '@/lib/types';
@@ -27,7 +28,7 @@ export default function Doctor() {
             <View style={{ height: 260, borderRadius: 28, backgroundColor: C.deep, overflow: 'hidden', justifyContent: 'flex-end', ...S.up }}>
               <View style={{ position: 'absolute', width: 300, height: 300, borderRadius: 150, right: -60, top: -40, backgroundColor: C.brand }} />
               {d.photoUrl
-                ? <Image source={d.photoUrl} style={{ position: 'absolute', right: 0, bottom: 0, width: 220, height: 260 }} contentFit="contain" contentPosition="bottom" accessibilityLabel={d.name} />
+                ? <Image source={mediaUrl(d.photoUrl)} style={{ position: 'absolute', right: -6, bottom: 0, width: 200, height: 250 }} contentFit="contain" contentPosition="bottom" accessibilityLabel={d.name} />
                 : <T w="black" size={120} color="rgba(255,255,255,0.28)" style={{ position: 'absolute', right: 16, top: 6, lineHeight: 130 }}>{initials(d.name)}</T>}
               <View style={{ padding: 18, maxWidth: '62%' }}>
                 <T w="bold" size={13} color="rgba(255,255,255,0.85)">{d.specialty.name}</T>

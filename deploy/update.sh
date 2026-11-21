@@ -10,7 +10,7 @@ echo "Changes coming in:"; git --no-pager log --oneline HEAD..origin/main; git -
 read -r -p "Deploy these? [y/N] " ok; [ "$ok" = "y" ] || exit 0
 git merge --ff-only origin/main
 
-(cd apps/api && npm ci --no-audit --no-fund && npm run build && npm run db:migrate:prod)
+(cd apps/api && npm ci --no-audit --no-fund && npm run build && npm run db:migrate:prod && if grep -q '^DEMO_MODE=1' .env; then npx tsx src/scripts/demo-photos.ts; fi)
 (cd apps/patient && npm ci --no-audit --no-fund && npx expo export --platform web)
 pm2 restart medicseba-api
 sleep 2 && curl -fsS http://127.0.0.1:4100/health && echo " API is up"

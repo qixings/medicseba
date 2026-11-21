@@ -10,6 +10,7 @@ export const C = {
   ink: '#0B1220',
   sec: 'rgba(11,18,32,0.66)',
   faint: 'rgba(11,18,32,0.45)',
+  placeholder: 'rgba(11,18,32,0.26)', // light enough that an empty field never looks filled
   line: 'rgba(11,18,32,0.08)',
   field: 'rgba(11,18,32,0.12)',
   bg: '#F3F5F9',

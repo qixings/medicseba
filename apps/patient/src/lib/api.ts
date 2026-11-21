@@ -1,3 +1,5 @@
+import { Platform } from 'react-native';
+
 export const API_URL = (process.env.EXPO_PUBLIC_API_URL ?? 'http://localhost:4000').replace(/\/$/, '');
 
 let authToken: string | null = null;
@@ -31,3 +33,13 @@ export async function api<T>(path: string, opts: { method?: string; body?: unkno
 export const post = <T>(path: string, body?: unknown) => api<T>(path, { method: 'POST', body: body ?? {} });
 export const patch = <T>(path: string, body: unknown) => api<T>(path, { method: 'PATCH', body });
 export const del = <T>(path: string) => api<T>(path, { method: 'DELETE' });
+
+/**
+ * Photos are stored as paths like /doctors/x.webp and served by the web host.
+ * The web app loads them from its own site; the phone apps load them from the same domain.
+ */
+export const mediaUrl = (u: string | null | undefined) => {
+  if (!u) return null;
+  if (/^https?:/.test(u) || Platform.OS === 'web') return u;
+  return `${API_URL}${u.startsWith('/') ? '' : '/'}${u}`;
+};
