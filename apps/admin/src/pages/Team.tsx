@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { api, dateTime, Drawer, Field, Loading, Pill, useAction, useAuth, useLoad, type Role } from '../lib';
+import { api, dateTime, Drawer, Field, Loading, PasswordInput, Pill, useAction, useAuth, useLoad, type Role } from '../lib';
 
 type Member = { id: string; username: string; name: string; role: Role; active: boolean; lastLoginAt: string | null };
 const ROLE_TEXT: Record<Role, string> = { OWNER: 'Owner: everything, including paying chambers and the team', MANAGER: 'Manager: doctors, chambers, sittings and refunds', SUPPORT: 'Support: can look things up, cannot change them' };
@@ -60,7 +60,7 @@ function MemberDrawer({ m, self, onClose, onSaved }: { m: Member | null; self: b
             </label>
           ))}
         </div>
-        <Field label={m ? 'New password (leave empty to keep)' : 'Password'}><input className="input" type="password" value={password} onChange={(e) => setPassword(e.target.value)} autoComplete="new-password" /></Field>
+        <PasswordInput label={m ? 'New password (leave empty to keep)' : 'Password'} value={password} onChange={setPassword} />
         <p className="muted small" style={{ margin: 0 }}>At least 8 characters. Changing it signs them out everywhere.</p>
         <button className="btn primary" disabled={busy || name.trim().length < 2 || (!m && (username.length < 3 || password.length < 8)) || (!!password && password.length < 8)} onClick={save}>{m ? 'Save' : 'Add'}</button>
         {m && !self ? (

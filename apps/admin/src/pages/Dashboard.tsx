@@ -29,7 +29,7 @@ export default function Dashboard() {
         <>
           <div className="grid3">
             <div className="card stat dark"><div className="v">{d.onlineBookings}</div><div className="l">Online bookings</div></div>
-            <div className="card stat"><div className="v">{d.walkIns}</div><div className="l">Counter tokens</div></div>
+            <div className="card stat"><div className="v">{d.walkIns}</div><div className="l">Counter serials</div></div>
             <div className="card stat"><div className="v">{rupee(d.collected)}</div><div className="l">Collected online</div></div>
             <div className="card stat"><div className="v">{rupee(d.platformFees)}</div><div className="l">Our service fees</div></div>
             <div className="card stat"><div className="v">{rupee(d.owedToChambers)}</div><div className="l">Owed to chambers</div></div>

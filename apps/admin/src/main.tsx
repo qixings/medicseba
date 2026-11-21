@@ -2,7 +2,7 @@ import { StrictMode, useState, type FormEvent } from 'react';
 import { createRoot } from 'react-dom/client';
 import { BrowserRouter, Navigate, NavLink, Route, Routes } from 'react-router-dom';
 import './styles.css';
-import { AuthProvider, Icon, ToastProvider, useAuth } from './lib';
+import { AuthProvider, Icon, PasswordInput, ToastProvider, useAuth, useTheme } from './lib';
 import Dashboard from './pages/Dashboard';
 import Sittings from './pages/Sittings';
 import Doctors from './pages/Doctors';
@@ -15,6 +15,9 @@ import Patients from './pages/Patients';
 import Money from './pages/Money';
 import Team from './pages/Team';
 import Activity from './pages/Activity';
+import PatientProfile from './pages/PatientProfile';
+import Messages from './pages/Messages';
+import Settings from './pages/Settings';
 
 function Login() {
   const { login } = useAuth();
@@ -32,7 +35,7 @@ function Login() {
         <img src="/admin/logo.svg" alt="MedicSeba" />
         <h1 style={{ fontSize: 26 }}>Admin</h1>
         <label className="f">Username<input className="input" value={u} onChange={(e) => setU(e.target.value)} autoComplete="username" autoFocus /></label>
-        <label className="f">Password<input className="input" type="password" value={p} onChange={(e) => setP(e.target.value)} autoComplete="current-password" /></label>
+        <PasswordInput label="Password" value={p} onChange={setP} autoComplete="current-password" />
         {err ? <div className="err">{err}</div> : null}
         <button className="btn primary" style={{ height: 44 }} disabled={busy || !u || !p}>{busy ? 'Signing in' : 'Sign in'}</button>
       </form>
@@ -48,10 +51,22 @@ const NAV: { to: string; label: string; icon: string; owner?: boolean }[] = [
   { to: '/chambers', label: 'Chambers', icon: 'store' },
   { to: '/specialties', label: 'Specialties', icon: 'tag' },
   { to: '/patients', label: 'Patients', icon: 'users' },
+  { to: '/messages', label: 'Messages', icon: 'send' },
   { to: '/money', label: 'Money', icon: 'money' },
   { to: '/team', label: 'Team', icon: 'shield', owner: true },
   { to: '/activity', label: 'Activity', icon: 'list', owner: true },
+  { to: '/settings', label: 'Settings', icon: 'gear', owner: true },
 ];
+
+function ThemeToggle() {
+  const [theme, setTheme] = useTheme();
+  const dark = theme === 'dark';
+  return (
+    <a href="#" role="switch" aria-checked={dark} onClick={(e) => { e.preventDefault(); setTheme(dark ? 'light' : 'dark'); }}>
+      <Icon name={dark ? 'sun' : 'moon'} />{dark ? 'Light mode' : 'Dark mode'}
+    </a>
+  );
+}
 
 function Shell() {
   const { admin, logout, can } = useAuth();
@@ -64,6 +79,7 @@ function Shell() {
           <NavLink key={n.to} to={n.to} end={n.to === '/'}><Icon name={n.icon} />{n.label}</NavLink>
         ))}
         <div className="grow" />
+        <ThemeToggle />
         <div className="me"><b>{admin.name}</b>{admin.role.toLowerCase()}</div>
         <a href="#" onClick={(e) => { e.preventDefault(); logout(); }}><Icon name="logout" />Log out</a>
       </nav>
@@ -78,9 +94,12 @@ function Shell() {
           <Route path="/chambers/:id" element={<ChamberEdit />} />
           <Route path="/specialties" element={<Specialties />} />
           <Route path="/patients" element={<Patients />} />
+          <Route path="/patients/:id" element={<PatientProfile />} />
+          <Route path="/messages" element={<Messages />} />
           <Route path="/money" element={<Money />} />
           {can('OWNER') ? <Route path="/team" element={<Team />} /> : null}
           {can('OWNER') ? <Route path="/activity" element={<Activity />} /> : null}
+          {can('OWNER') ? <Route path="/settings" element={<Settings />} /> : null}
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>
       </main>

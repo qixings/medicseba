@@ -37,8 +37,8 @@ const en = {
   male: 'Male',
   female: 'Female',
   other: 'Other',
-  giveToken: 'Give token',
-  tokenGiven: 'Token given',
+  giveToken: 'Give serial',
+  tokenGiven: 'Serial given',
   tellPatient: 'Tell the patient this number.',
   pendingNumber: 'Number comes when the internet is back. Note the name for now.',
   close: 'Close',
@@ -56,7 +56,7 @@ const en = {
   st_ENDED: 'Ended',
   lateBy: 'Late by how long?',
   min: 'min',
-  notComingAsk: 'Mark the doctor as not coming? Every online patient is told and can choose a refund or another day. This cannot be undone.',
+  notComingAsk: 'Mark the doctor as not coming? Every online patient is told and can move their serial to another day for free. This cannot be undone.',
   endAsk: 'End this sitting? No more patients can be called.',
   yesSure: 'Yes',
   cancel: 'Cancel',
@@ -75,6 +75,9 @@ const en = {
   cancelled: 'Cancelled',
   ended: 'Ended',
   updated: 'Updated',
+  fromTeam: 'Message from MedicSeba',
+  serving: 'Serving',
+  markRead: 'Got it',
 };
 
 type Dict = typeof en;
@@ -105,7 +108,7 @@ const bn: Dict = {
   noneWaiting: 'কেউ অপেক্ষায় নেই।',
   noneMissed: 'কোনো মিস করা রোগী নেই।',
   noneDone: 'এখনো কাউকে দেখা হয়নি।',
-  addWalkIn: 'কাউন্টার টোকেন',
+  addWalkIn: 'কাউন্টার সিরিয়াল',
   walkInTitle: 'কাউন্টারের রোগী',
   name: 'রোগীর নাম',
   age: 'বয়স',
@@ -113,8 +116,8 @@ const bn: Dict = {
   male: 'পুরুষ',
   female: 'মহিলা',
   other: 'অন্যান্য',
-  giveToken: 'টোকেন দিন',
-  tokenGiven: 'টোকেন দেওয়া হয়েছে',
+  giveToken: 'সিরিয়াল দিন',
+  tokenGiven: 'সিরিয়াল দেওয়া হয়েছে',
   tellPatient: 'রোগীকে এই নম্বরটি বলুন।',
   pendingNumber: 'ইন্টারনেট ফিরলে নম্বর আসবে। আপাতত নামটি লিখে রাখুন।',
   close: 'বন্ধ',
@@ -132,7 +135,7 @@ const bn: Dict = {
   st_ENDED: 'শেষ',
   lateBy: 'কত দেরি?',
   min: 'মিনিট',
-  notComingAsk: 'ডাক্তার আসছেন না বলে জানাবেন? সব অনলাইন রোগীকে জানানো হবে, তারা টাকা ফেরত বা অন্য দিন বাছতে পারবেন। এটা ফেরানো যাবে না।',
+  notComingAsk: 'ডাক্তার আসছেন না বলে জানাবেন? সব অনলাইন রোগীকে জানানো হবে, তারা বিনামূল্যে অন্য দিনে সিরিয়াল সরাতে পারবেন। এটা ফেরানো যাবে না।',
   endAsk: 'এই বসা শেষ করবেন? আর কোনো রোগী ডাকা যাবে না।',
   yesSure: 'হ্যাঁ',
   cancel: 'বাতিল',
@@ -151,6 +154,9 @@ const bn: Dict = {
   cancelled: 'বাতিল',
   ended: 'শেষ',
   updated: 'আপডেট',
+  fromTeam: 'মেডিকসেবা থেকে বার্তা',
+  serving: 'চলছে',
+  markRead: 'বুঝেছি',
 };
 
 const dicts = { en, bn };

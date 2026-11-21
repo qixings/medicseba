@@ -174,7 +174,7 @@ test('cancel gives no refund and frees the place', async () => {
   assert.equal(row.onlineTaken, 0);
 });
 
-test('doctor not coming: patient picks refund or move', async () => {
+test('doctor not coming: patient moves for free, no refunds', async () => {
   const list = (await sessionsOf('Dr. Mitali Saha')).filter((x) => x.date >= addDays(istDate(), 1));
   const [s, next] = list;
   const u1 = await login('9400000001', 'Refund Me');
@@ -186,10 +186,11 @@ test('doctor not coming: patient picks refund or move', async () => {
   const notes = await call('GET', '/me/notifications', undefined, u1.token);
   assert.ok(notes.body.some((n: { kind: string }) => n.kind === 'not_coming'));
 
+  // No-refund policy: a refund is not an option for patients.
   const r = await call('POST', `/bookings/${b1.body.token.id}/absent-choice`, { choice: 'refund' }, u1.token);
-  assert.equal(r.body.token.state, 'REFUNDED');
+  assert.equal(r.status, 400);
   const [pay] = await db.select().from(schema.payments).where(eq(schema.payments.tokenId, b1.body.token.id));
-  assert.equal(pay.status, 'REFUNDED');
+  assert.equal(pay.status, 'PAID');
 
   const mv = await call('POST', `/bookings/${b2.body.token.id}/absent-choice`, { choice: 'move', sessionId: next.id }, u2.token);
   assert.equal(mv.status, 200, JSON.stringify(mv.body));
@@ -299,13 +300,21 @@ test('admin: roles, doctor and schedule, session limits, refund, settlement', as
   mine = list.find((x) => x.doctor.id === doc.body.id)!;
   assert.ok(mine, 'booked sitting still there');
 
-  // Search and refund.
-  const found = await call('GET', '/admin/bookings?q=9600000001', undefined, sup);
+  // Search, move (the normal fix), and the owner-only refund for payment errors.
+  let found = await call('GET', '/admin/bookings?q=9600000001', undefined, sup);
   assert.equal(found.body.length, 1);
-  assert.equal((await call('POST', `/admin/bookings/${found.body[0].id}/refund`, { reason: 'test' }, sup)).status, 403);
-  const rf = await call('POST', `/admin/bookings/${found.body[0].id}/refund`, { reason: 'Patient asked' }, own);
+  const targets = await call('GET', `/admin/doctors/${doc.body.id}/upcoming`, undefined, own);
+  const target = targets.body.find((x: { id: string; left: number }) => x.id !== mine.id && x.left > 0);
+  assert.equal((await call('POST', `/admin/bookings/${found.body[0].id}/move`, { sessionId: target.id, reason: 'x support' }, sup)).status, 403);
+  const mv = await call('POST', `/admin/bookings/${found.body[0].id}/move`, { sessionId: target.id, reason: 'Doctor away' }, own);
+  assert.equal(mv.status, 200, JSON.stringify(mv.body));
+  found = await call('GET', '/admin/bookings?q=9600000001', undefined, sup);
+  const movedRow = found.body.find((x: { state: string }) => x.state === 'BOOKED');
+  assert.ok(movedRow, 'moved serial is booked');
+  assert.equal((await call('POST', `/admin/bookings/${movedRow.id}/refund`, { reason: 'test' }, sup)).status, 403);
+  const rf = await call('POST', `/admin/bookings/${movedRow.id}/refund`, { reason: 'Charged twice by the bank' }, own);
   assert.equal(rf.status, 200, JSON.stringify(rf.body));
-  const [sAfter] = await db.select().from(schema.sessions).where(eq(schema.sessions.id, mine.id));
+  const [sAfter] = await db.select().from(schema.sessions).where(eq(schema.sessions.id, target.id));
   assert.equal(sAfter.onlineTaken, 0, 'refund frees the place');
 
   // Settlement for a past day with one paid booking.
@@ -329,3 +338,39 @@ test('admin: roles, doctor and schedule, session limits, refund, settlement', as
 });
 
 function weekdayOf(date: string) { return new Date(`${date}T00:00:00Z`).getUTCDay(); }
+
+test('broadcasts reach patients and counters; patient profile; settings', async () => {
+  const own = (await call('POST', '/admin/login', { username: 'owner1', password: 'secret123' })).body.token as string;
+  const sup = (await call('POST', '/admin/login', { username: 'support1', password: 'secret123' })).body.token as string;
+  const u = await login('9700000001', 'Broadcast Patient');
+  const pv = await call('POST', '/admin/broadcasts/preview', { kind: 'patient', id: (await call('GET', '/me', undefined, u.token)).body.id }, sup);
+  assert.equal(pv.body.patients, 1);
+  const me = (await call('GET', '/me', undefined, u.token)).body;
+  assert.equal((await call('POST', '/admin/broadcasts', { audience: { kind: 'patient', id: me.id }, label: 'One', title: 'Hello', body: 'Test message' }, sup)).status, 403);
+  const sent = await call('POST', '/admin/broadcasts', { audience: { kind: 'patient', id: me.id }, label: 'One patient', title: 'Clinic closed Sunday', body: 'City Medicos is closed this Sunday.' }, own);
+  assert.equal(sent.status, 200, JSON.stringify(sent.body));
+  await new Promise((r) => setTimeout(r, 300));
+  const notes = await call('GET', '/me/notifications', undefined, u.token);
+  assert.ok(notes.body.some((n: { title: string }) => n.title === 'Clinic closed Sunday'));
+
+  await call('POST', '/admin/broadcasts', { audience: { kind: 'all_counters' }, label: 'All counters', title: 'New rule', body: 'Ask patients to show the serial in the app.' }, own);
+  await new Promise((r) => setTimeout(r, 300));
+  const msgs = await call('GET', '/agent/messages', undefined, agentToken);
+  assert.ok(msgs.body.some((m: { title: string; readAt: string | null }) => m.title === 'New rule' && !m.readAt));
+  await call('POST', '/agent/messages/read', {}, agentToken);
+  assert.ok((await call('GET', '/agent/messages', undefined, agentToken)).body.every((m: { readAt: string | null }) => m.readAt));
+
+  const prof = await call('GET', `/admin/patients/${me.id}`, undefined, sup);
+  assert.equal(prof.body.phone, '+919700000001');
+  assert.equal(prof.body.family.length, 1);
+  assert.ok(prof.body.notifications.length >= 1);
+
+  assert.equal((await call('GET', '/admin/settings/notifications', undefined, sup)).status, 403);
+  const st = await call('GET', '/admin/settings/notifications', undefined, own);
+  assert.equal(st.body.status.whatsapp, false);
+  const saved = await call('PUT', '/admin/settings/notifications', { whatsapp: { enabled: true, template: 'medicseba_update', events: { booked: true, late: false } } }, own);
+  assert.equal(saved.body.whatsapp.enabled, true);
+  assert.equal(saved.body.whatsapp.events.late, false);
+  const test = await call('POST', '/admin/settings/notifications/test', { phone: '9876543210' }, own);
+  assert.equal(test.status, 502, 'test send says WhatsApp is not connected');
+});

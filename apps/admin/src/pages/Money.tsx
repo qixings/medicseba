@@ -45,7 +45,7 @@ export default function Money() {
         <Loading error={error} loading={loading && !data} empty={!!data && rows.length === 0 && 'No online bookings for sittings on this day.'} />
         {rows.length ? (
           <table>
-            <thead><tr><th>Chamber</th><th className="right">Paid tokens</th><th className="right">Chamber share</th><th className="right">Our service fees</th><th className="right">Refunded</th><th>Status</th><th /></tr></thead>
+            <thead><tr><th>Chamber</th><th className="right">Paid serials</th><th className="right">Chamber share</th><th className="right">Our service fees</th><th className="right">Refunded</th><th>Status</th><th /></tr></thead>
             <tbody>
               {rows.map((r) => <MoneyRow key={r.chamberId} r={r} canPay={can('OWNER')} onPaid={reload} />)}
               <tr><td className="strong">Total</td><td className="right num strong">{total('bookings')}</td><td className="right num strong">{rupee(total('amount'))}</td><td className="right num strong">{rupee(total('platformFees'))}</td><td className="right num">{rupee(total('refunds'))}</td><td /><td /></tr>

@@ -21,6 +21,10 @@ export const env = {
   rescheduleCutoffMinutes: Number(process.env.RESCHEDULE_CUTOFF_MINUTES ?? 120),
   avgMinutesPerPatient: Number(process.env.AVG_MINUTES_PER_PATIENT ?? 7),
   corsOrigin: process.env.CORS_ORIGIN ?? '*',
+  /** WhatsApp Business (Meta Cloud API). Leave empty to keep WhatsApp off. */
+  whatsappToken: process.env.WHATSAPP_TOKEN ?? '',
+  whatsappPhoneId: process.env.WHATSAPP_PHONE_NUMBER_ID ?? '',
+  whatsappApiVersion: process.env.WHATSAPP_API_VERSION ?? 'v21.0',
   /** Where uploaded photos are kept. */
   uploadDir: process.env.UPLOAD_DIR ?? new URL('../uploads', import.meta.url).pathname,
   /** Test server: shows the OTP on screen and allows test payments, even in production. */

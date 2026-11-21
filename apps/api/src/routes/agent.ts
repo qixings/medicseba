@@ -1,14 +1,14 @@
 import type { FastifyInstance } from 'fastify';
 import bcrypt from 'bcryptjs';
 import { z } from 'zod';
-import { and, asc, eq, isNotNull } from 'drizzle-orm';
+import { and, asc, desc, eq, isNotNull, isNull } from 'drizzle-orm';
 import { db, schema } from '../db.js';
 import { requireAgent, signAgent } from '../auth.js';
 import { ApiError, forbidden, notFound } from '../errors.js';
 import { addWalkIn, callNext, closeBooking, reopenBooking, setDoctorStatus, tokenAction } from '../booking.js';
 import { istDate, prettyTime } from '../time.js';
 
-const { agentAccounts, sessions, doctors, tokens, chambers, specialties } = schema;
+const { agentAccounts, sessions, doctors, tokens, chambers, specialties, agentMessages } = schema;
 
 function sessionOut(s: typeof sessions.$inferSelect, d: typeof doctors.$inferSelect, spec?: typeof specialties.$inferSelect | null) {
   return {
@@ -95,6 +95,15 @@ export async function agentRoutes(app: FastifyInstance) {
 
     r.post('/agent/sessions/:id/reopen', async (req) => {
       await reopenBooking(req.agent!.chamberId, (req.params as { id: string }).id);
+      return { ok: true };
+    });
+
+    /** Messages from the MedicSeba team to this chamber. */
+    r.get('/agent/messages', async (req) =>
+      db.select().from(agentMessages).where(eq(agentMessages.chamberId, req.agent!.chamberId)).orderBy(desc(agentMessages.createdAt)).limit(30));
+
+    r.post('/agent/messages/read', async (req) => {
+      await db.update(agentMessages).set({ readAt: new Date() }).where(and(eq(agentMessages.chamberId, req.agent!.chamberId), isNull(agentMessages.readAt)));
       return { ok: true };
     });
 

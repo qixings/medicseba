@@ -29,6 +29,13 @@
       "when": 1795259640830,
       "tag": "0003_password_changed",
       "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1795261304019,
+      "tag": "0004_broadcasts",
+      "breakpoints": true
     }
   ]
 }

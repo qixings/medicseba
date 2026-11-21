@@ -92,8 +92,8 @@ export default function DoctorEdit() {
                     <p className="muted small" style={{ margin: 0, maxWidth: 240 }}>A PNG with a see-through background looks best, cut out from the waist up. Up to 4 MB.</p>
                     <input ref={fileRef} type="file" accept="image/png,image/jpeg,image/webp" hidden onChange={(e) => { const x = e.target.files?.[0]; if (x) void upload(x); e.target.value = ''; }} />
                     <div className="row">
-                      <button className="btn" onClick={() => fileRef.current?.click()} disabled={busy}>Upload photo</button>
-                      {d!.photoUrl ? <button className="btn danger" disabled={busy} onClick={async () => { if (await run(() => api(`/admin/doctors/${id}`, { method: 'PATCH', body: { photoUrl: null } }), 'Photo removed')) void doc.reload(); }}>Remove</button> : null}
+                      <button className="btn" onClick={() => fileRef.current?.click()} disabled={busy}>{d!.photoUrl ? 'Replace photo' : 'Upload photo'}</button>
+                      {d!.photoUrl ? <button className="btn danger" disabled={busy} onClick={async () => { if (await run(() => api(`/admin/doctors/${id}/photo`, { method: 'DELETE' }), 'Photo removed')) void doc.reload(); }}>Remove</button> : null}
                     </div>
                   </div>
                 ) : null}
@@ -110,7 +110,7 @@ export default function DoctorEdit() {
               <Loading empty={d!.schedules.length === 0 && 'Not sitting anywhere yet. Add a chamber, days and time.'} />
               {d!.schedules.length ? (
                 <table>
-                  <thead><tr><th>Chamber</th><th>Days</th><th>Time</th><th className="right">Tokens</th><th className="right">Online</th><th /></tr></thead>
+                  <thead><tr><th>Chamber</th><th>Days</th><th>Time</th><th className="right">Serials</th><th className="right">Online</th><th /></tr></thead>
                   <tbody>
                     {d!.schedules.map((s) => (
                       <tr key={s.id} className={edit ? 'click' : ''} onClick={() => edit && setSched(s)} style={{ opacity: s.active ? 1 : 0.5 }}>
@@ -173,7 +173,7 @@ function ScheduleDrawer({ doctorId, s, onClose, onSaved }: { doctorId: string; s
         </div>
         <div className="form">
           <Field label="Starts at"><input className="input" type="time" value={time} onChange={(e) => setTime(e.target.value)} /></Field>
-          <Field label="Tokens per sitting"><input className="input" type="number" min={1} max={500} value={limit} onChange={(e) => setLimit(Number(e.target.value))} /></Field>
+          <Field label="Serials per sitting"><input className="input" type="number" min={1} max={500} value={limit} onChange={(e) => setLimit(Number(e.target.value))} /></Field>
           <Field label="Share for online booking (%)"><input className="input" type="number" min={0} max={100} value={share} onChange={(e) => setShare(Number(e.target.value))} /></Field>
           <div className="f">Split<div className="muted" style={{ fontWeight: 500, paddingTop: 10 }}>{Math.floor((limit * share) / 100)} online, {limit - Math.floor((limit * share) / 100)} at the counter</div></div>
         </div>

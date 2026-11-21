@@ -136,8 +136,9 @@ export async function patientRoutes(app: FastifyInstance) {
     });
 
     auth.post('/bookings/:id/absent-choice', async (req) => {
-      const b = z.object({ choice: z.enum(['refund', 'move']), sessionId: z.string().optional() }).parse(req.body);
-      const t = await absentChoice(req.userId!, (req.params as { id: string }).id, b.choice, b.sessionId);
+      // No refunds: the only choice is a free move to another sitting.
+      const b = z.object({ choice: z.literal('move').default('move'), sessionId: z.string() }).parse(req.body);
+      const t = await absentChoice(req.userId!, (req.params as { id: string }).id, b.sessionId);
       return liveView(t.id);
     });
 

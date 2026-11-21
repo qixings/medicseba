@@ -9,6 +9,8 @@ import { storage } from '@/lib/storage';
 import { C } from '@/lib/theme';
 import { Icon } from '@/components/Icon';
 import { SyncBar } from '@/components/SyncBar';
+import { Inbox } from '@/components/Inbox';
+import { Logo } from '@/components/Logo';
 import { Avatar, Card, H1, Page, Pill, Segmented, Status, T, tap } from '@/components/ui';
 
 const istDay = (plus = 0) => new Date(Date.now() + 330 * 60_000 + plus * 86_400_000).toISOString().slice(0, 10);
@@ -42,9 +44,9 @@ export default function Sittings() {
   return (
     <Page refresh={<RefreshControl refreshing={loading && !!list} onRefresh={() => { void load(); }} tintColor={C.deep} />} style={{ width: '100%', maxWidth: 760, alignSelf: 'center' }}>
       <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
-        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
-          <View style={{ width: 8, height: 8, borderRadius: 4, backgroundColor: online ? C.good : C.warn }} />
-          <T w="bold" size={13} color={C.link}>{chamber?.area}</T>
+        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+          <Logo height={22} />
+          <View accessibilityLabel={online ? 'Online' : 'Offline'} style={{ width: 8, height: 8, borderRadius: 4, backgroundColor: online ? C.good : C.warn }} />
         </View>
         <View style={{ flexDirection: 'row', gap: 8 }}>
           <Pressable onPress={() => { tap(); setLang(t.lang === 'en' ? 'bn' : 'en'); }} style={{ height: 38, paddingHorizontal: 12, borderRadius: 19, borderWidth: 1, borderColor: C.line, backgroundColor: C.white, justifyContent: 'center' }}>
@@ -60,6 +62,7 @@ export default function Sittings() {
         <Segmented value={day} onChange={setDay} options={[{ value: 'today', label: t('today') }, { value: 'tomorrow', label: t('tomorrow') }]} />
       </View>
       <SyncBar />
+      <Inbox />
       <Status loading={!list} empty={list?.length === 0 ? t('noSittings') : undefined} />
       <View style={{ gap: 10 }}>
         {list?.map((s) => <SittingCard key={s.id} s={s} />)}
@@ -87,7 +90,7 @@ function SittingCard({ s }: { s: SessionRow }) {
         </View>
       </View>
       <View style={{ flexDirection: 'row', gap: 8 }}>
-        <Stat label={t('nowServing')} value={s.servingNumber || '-'} dark />
+        <Stat label={t('serving')} value={s.servingNumber || '-'} dark />
         <Stat label={t('online')} value={`${s.onlineTaken}/${s.onlineLimit}`} />
         <Stat label={t('counter')} value={s.counterTaken} />
         <Stat label={t('left')} value={left} />

@@ -1,9 +1,11 @@
 import { useEffect, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { dateTime, Loading, useLoad } from '../lib';
 
 type Row = { id: string; phone: string; name: string | null; createdAt: string; bookings: number };
 
 export default function Patients() {
+  const nav = useNavigate();
   const [q, setQ] = useState('');
   const [query, setQuery] = useState('');
   useEffect(() => { const id = setTimeout(() => setQuery(q.trim()), 350); return () => clearTimeout(id); }, [q]);
@@ -20,7 +22,7 @@ export default function Patients() {
           <table>
             <thead><tr><th>Name</th><th>Phone</th><th className="right">Bookings</th><th>Signed up</th></tr></thead>
             <tbody>{data.map((p) => (
-              <tr key={p.id}><td className="strong">{p.name ?? <span className="muted">Not set</span>}</td><td className="num">{p.phone}</td><td className="right num">{p.bookings}</td><td className="muted">{dateTime(p.createdAt)}</td></tr>
+              <tr key={p.id} className="click" onClick={() => nav(`/patients/${p.id}`)}><td className="strong">{p.name ?? <span className="muted">Not set</span>}</td><td className="num">{p.phone}</td><td className="right num">{p.bookings}</td><td className="muted">{dateTime(p.createdAt)}</td></tr>
             ))}</tbody>
           </table>
         ) : null}

@@ -227,3 +227,46 @@ export const auditLog = pgTable('audit_log', {
   data: jsonb('data').notNull().default({}),
   createdAt: createdAt(),
 }, (t) => [index('audit_created_idx').on(t.createdAt)]);
+
+/** Small settings the owner can change in the admin panel (secrets stay in the server's .env). */
+export const appSettings = pgTable('app_settings', {
+  key: text('key').primaryKey(),
+  value: jsonb('value').$type<Record<string, unknown>>().notNull(),
+  updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+});
+
+/** A message the team sent to many patients or to chamber counters. */
+export const broadcasts = pgTable('broadcasts', {
+  id: id(),
+  adminId: text('admin_id').notNull(),
+  audience: jsonb('audience').$type<{ kind: string; id?: string; label: string }>().notNull(),
+  title: text('title').notNull(),
+  body: text('body').notNull(),
+  channels: text('channels').array().notNull(),
+  recipients: integer('recipients').notNull().default(0),
+  sent: integer('sent').notNull().default(0),
+  status: text('status').notNull().default('SENDING'),
+  createdAt: createdAt(),
+});
+
+/** Messages shown in the chamber counter app. */
+export const agentMessages = pgTable('agent_messages', {
+  id: id(),
+  chamberId: text('chamber_id').notNull().references(() => chambers.id),
+  broadcastId: text('broadcast_id'),
+  title: text('title').notNull(),
+  body: text('body').notNull(),
+  readAt: timestamp('read_at', { withTimezone: true }),
+  createdAt: createdAt(),
+}, (t) => [index('agent_message_chamber_idx').on(t.chamberId, t.createdAt)]);
+
+/** Every WhatsApp or SMS we tried to send, to see what failed. */
+export const messageLog = pgTable('message_log', {
+  id: id(),
+  channel: text('channel').notNull(),
+  to: text('to').notNull(),
+  kind: text('kind').notNull(),
+  status: text('status').notNull(),
+  error: text('error'),
+  createdAt: createdAt(),
+}, (t) => [index('message_log_created_idx').on(t.createdAt)]);

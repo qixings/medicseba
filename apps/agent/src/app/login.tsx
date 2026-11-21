@@ -6,7 +6,7 @@ import { signIn } from '@/lib/auth';
 import { setLang, useT } from '@/lib/i18n';
 import { C } from '@/lib/theme';
 import { Logo } from '@/components/Logo';
-import { Button, Field, H1, T, tap } from '@/components/ui';
+import { Button, Field, H1, PasswordField, T, tap } from '@/components/ui';
 
 export default function Login() {
   const t = useT();
@@ -42,7 +42,7 @@ export default function Login() {
         </View>
         <View style={{ borderRadius: 28, backgroundColor: C.white, borderWidth: 1, borderColor: C.line, padding: 20, gap: 14 }}>
           <Field label={t('username')} value={user} onChangeText={setUser} autoCapitalize="none" autoCorrect={false} autoComplete="username" placeholder="citymedicos" />
-          <Field label={t('password')} value={pass} onChangeText={setPass} secureTextEntry autoComplete="password" onSubmitEditing={go} />
+          <PasswordField label={t('password')} value={pass} onChangeText={setPass} onSubmitEditing={go} />
           {err ? <T size={14} color={C.bad}>{err}</T> : null}
           <Button title={t('signIn')} onPress={go} loading={busy} disabled={!user.trim() || !pass} />
         </View>

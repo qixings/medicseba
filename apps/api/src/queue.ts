@@ -90,6 +90,6 @@ export async function checkAheadAlerts(sessionId: string) {
     const [sent] = await db.select({ id: notifications.id }).from(notifications)
       .where(and(eq(notifications.userId, t.userId), eq(notifications.kind, kind), sql`${notifications.data}->>'tokenId' = ${t.id}`)).limit(1);
     if (sent) continue;
-    await notifyUser(t.userId, kind, `${ahead} patients ahead of you`, `Token ${t.number} at ${r.chambers.name}. Start heading there.`, { tokenId: t.id });
+    await notifyUser(t.userId, kind, `${ahead} patients ahead of you`, `Serial ${t.number} at ${r.chambers.name}. Start heading there.`, { tokenId: t.id });
   }
 }

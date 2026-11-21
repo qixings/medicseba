@@ -1,4 +1,6 @@
-import { Linking, View } from 'react-native';
+import { Linking, ScrollView, View } from 'react-native';
+import { Image } from 'expo-image';
+import { mediaUrl } from '@/lib/api';
 import { openMaps } from '@/lib/maps';
 import { router, useLocalSearchParams } from 'expo-router';
 import { useApi } from '@/lib/query';
@@ -22,10 +24,21 @@ export default function Chamber() {
         <Status loading={q.isLoading} error={q.error} onRetry={() => q.refetch()} />
         {c ? (
           <>
-            <View style={{ height: 150, borderRadius: 24, backgroundColor: C.tint, padding: 16, justifyContent: 'space-between', ...S.card }}>
-              <Pill text={c.openNow ? t('openNow') : t('closed')} tone={c.openNow ? 'good' : 'warn'} />
-              <Icon name="store" size={52} color={C.link} width={1.6} />
-            </View>
+            {c.photos.length ? (
+              <ScrollView horizontal pagingEnabled showsHorizontalScrollIndicator={false} style={{ marginHorizontal: -18 }} contentContainerStyle={{ paddingHorizontal: 18, gap: 10 }}>
+                {c.photos.map((p, i) => (
+                  <View key={p} style={{ width: c.photos.length > 1 ? 300 : 354, height: 200, borderRadius: 24, overflow: 'hidden', backgroundColor: C.tint, ...S.card }}>
+                    <Image source={mediaUrl(p)} style={{ width: '100%', height: '100%' }} contentFit="cover" accessibilityLabel={`${c.name} photo ${i + 1}`} />
+                    {i === 0 ? <View style={{ position: 'absolute', top: 12, left: 12 }}><Pill text={c.openNow ? t('openNow') : t('closed')} tone={c.openNow ? 'good' : 'warn'} /></View> : null}
+                  </View>
+                ))}
+              </ScrollView>
+            ) : (
+              <View style={{ height: 150, borderRadius: 24, backgroundColor: C.tint, padding: 16, justifyContent: 'space-between', ...S.card }}>
+                <Pill text={c.openNow ? t('openNow') : t('closed')} tone={c.openNow ? 'good' : 'warn'} />
+                <Icon name="store" size={52} color={C.link} width={1.6} />
+              </View>
+            )}
             <H1 size={30} style={{ marginTop: 14 }}>{c.name}</H1>
             <T w="light" size={15} color={C.sec} style={{ marginTop: 4 }}>{c.address}{c.landmark ? `. ${c.landmark}` : ''}</T>
             <T w="bold" size={14} style={{ marginTop: 6 }}>{t('hours')} <T numeric w="light" size={14}>{c.openingHours.replace('-', ' to ')}</T></T>

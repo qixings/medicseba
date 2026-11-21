@@ -8,6 +8,7 @@ import { C, F, card } from '@/lib/theme';
 import type { Home as HomeData, Note } from '@/lib/types';
 import { Icon, isIcon } from '@/components/Icon';
 import { ChamberCard, DoctorRow, TokenCard } from '@/components/cards';
+import { Logo } from '@/components/Logo';
 import { Avatar, Card, H1, Page, RoundButton, SectionHead, Status, T, tap } from '@/components/ui';
 
 export default function Home() {
@@ -24,10 +25,7 @@ export default function Home() {
   return (
     <Page tabs refresh={<RefreshControl refreshing={q.isRefetching} onRefresh={() => { void q.refetch(); void notes.refetch(); }} tintColor={C.deep} />}>
       <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
-        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
-          <Icon name="pin" size={14} color={C.link} width={2.4} />
-          <T w="bold" size={13} color={C.link}>{t('town')}</T>
-        </View>
+        <Logo height={24} />
         <RoundButton icon="bell" label={t('notifications')} dot={unread} onPress={() => router.push('/notifications')} />
       </View>
       <H1 style={{ marginTop: 4 }}>{t('bookDoctor')}</H1>

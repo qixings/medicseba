@@ -4,7 +4,7 @@ import sharp from 'sharp';
 import bcrypt from 'bcryptjs';
 import { randomUUID } from 'node:crypto';
 import { createReadStream, existsSync } from 'node:fs';
-import { mkdir, writeFile } from 'node:fs/promises';
+import { mkdir, unlink, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { z } from 'zod';
 import { and, asc, desc, eq, gte, ilike, isNotNull, lte, or, sql } from 'drizzle-orm';
@@ -12,13 +12,23 @@ import { db, schema } from '../db.js';
 import { requireAdmin, signAdmin } from '../auth.js';
 import { ApiError, badRequest, conflict, notFound } from '../errors.js';
 import { env } from '../env.js';
-import { refundToken } from '../booking.js';
-import { notifyUser } from '../notify.js';
+import { adminMove, refundToken } from '../booking.js';
+import { getNotifySettings, notifyUser, recentMessageLog, resolveAudience, runBroadcast, saveNotifySettings, sendWhatsApp, whatsappConfigured, WHATSAPP_EVENTS, type Audience, type NotifySettings } from '../notify.js';
 import { broadcastSession } from '../queue.js';
 import { applySchedule, generateSettlements, setSessionLimits, settlementPreview } from '../admin-logic.js';
 import { addDays, istDate, prettyTime } from '../time.js';
 
-const { adminUsers, auditLog, agentAccounts, chambers, doctors, specialties, schedules, sessions, tokens, payments, users, settlements } = schema;
+const { adminUsers, auditLog, agentAccounts, chambers, doctors, specialties, schedules, sessions, tokens, payments, users, settlements, familyMembers, notifications, broadcasts } = schema;
+
+const audienceBody = z.discriminatedUnion('kind', [
+  z.object({ kind: z.literal('all_patients') }),
+  z.object({ kind: z.literal('chamber_patients'), id: z.string() }),
+  z.object({ kind: z.literal('doctor_patients'), id: z.string() }),
+  z.object({ kind: z.literal('sitting_patients'), id: z.string() }),
+  z.object({ kind: z.literal('patient'), id: z.string() }),
+  z.object({ kind: z.literal('all_counters') }),
+  z.object({ kind: z.literal('counter'), id: z.string() }),
+]);
 
 const HHMM = z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/, 'Use 24-hour time like 17:30');
 const DATE = z.string().regex(/^\d{4}-\d{2}-\d{2}$/);
@@ -74,6 +84,36 @@ function sessionOut(s: typeof sessions.$inferSelect) {
     id: s.id, date: s.date, time: prettyTime(s.startTime), startTime: s.startTime, status: s.status, doctorStatus: s.doctorStatus,
     tokenLimit: s.tokenLimit, onlineLimit: s.onlineLimit, onlineTaken: s.onlineTaken, counterTaken: s.counterTaken, servingNumber: s.servingNumber,
   };
+}
+
+/** Read one uploaded image, check it is really an image, shrink it for phones and save it as WebP. Returns its /uploads URL. */
+async function saveUpload(req: FastifyRequest, prefix: string, o: { trim: boolean; max: number }) {
+  const file = await req.file();
+  if (!file) throw badRequest('no_file', 'Choose a photo');
+  const buf = await file.toBuffer();
+  const sig = buf.subarray(0, 12).toString('hex');
+  const real = sig.startsWith('89504e47') || sig.startsWith('ffd8ff') || (sig.startsWith('52494646') && buf.subarray(8, 12).toString() === 'WEBP');
+  if (!real) throw badRequest('bad_type', 'Use a PNG, JPG or WebP photo');
+  let out: Buffer;
+  try {
+    let img = sharp(buf).rotate();
+    if (o.trim) img = img.trim({ threshold: 1 });
+    out = await img.resize({ width: o.max, height: o.max, fit: 'inside', withoutEnlargement: true }).webp({ quality: 82 }).toBuffer();
+  } catch {
+    throw badRequest('bad_image', 'This photo could not be read. Try another file.');
+  }
+  await mkdir(env.uploadDir, { recursive: true });
+  const name = `${prefix}-${randomUUID()}.webp`;
+  await writeFile(path.join(env.uploadDir, name), out);
+  return `/uploads/${name}`;
+}
+
+/** Delete a photo file we uploaded earlier (bundled sample photos are left alone). */
+async function removeUpload(url: string | null | undefined) {
+  if (!url?.startsWith('/uploads/')) return;
+  const name = url.slice('/uploads/'.length);
+  if (!/^[a-z0-9-]+\.(png|jpe?g|webp)$/i.test(name)) return;
+  await unlink(path.join(env.uploadDir, name)).catch(() => {});
 }
 
 /** Photos uploaded from the admin panel, served at /uploads/<file> (outside /v1, like any image on a website). */
@@ -228,6 +268,37 @@ export async function adminRoutes(app: FastifyInstance) {
       return list;
     });
 
+    /** Everything about one patient: family, serials, payments and the notifications we sent. */
+    r.get('/admin/patients/:id', async (req) => {
+      const [u] = await db.select().from(users).where(eq(users.id, idParam(req)));
+      if (!u) throw notFound('Patient');
+      const family = await db.select().from(familyMembers).where(eq(familyMembers.userId, u.id)).orderBy(desc(familyMembers.isSelf), asc(familyMembers.name));
+      const list = await db.select().from(tokens)
+        .innerJoin(sessions, eq(sessions.id, tokens.sessionId)).innerJoin(doctors, eq(doctors.id, sessions.doctorId)).innerJoin(chambers, eq(chambers.id, sessions.chamberId))
+        .leftJoin(payments, eq(payments.tokenId, tokens.id))
+        .where(and(eq(tokens.userId, u.id), isNotNull(tokens.number))).orderBy(desc(sessions.date)).limit(100);
+      const notes = await db.select().from(notifications).where(eq(notifications.userId, u.id)).orderBy(desc(notifications.createdAt)).limit(50);
+      return {
+        id: u.id, phone: u.phone, name: u.name, language: u.language, createdAt: u.createdAt, pushDevices: u.pushTokens.length,
+        family: family.map((f) => ({ id: f.id, name: f.name, age: f.age, gender: f.gender, relation: f.relation, isSelf: f.isSelf, removed: !!f.deletedAt })),
+        bookings: list.map((x) => ({ id: x.tokens.id, number: x.tokens.number, state: x.tokens.state, patientName: x.tokens.patientName, date: x.sessions.date, time: prettyTime(x.sessions.startTime), doctor: x.doctors.name, chamber: x.chambers.name, amount: x.payments?.status === 'PAID' ? x.payments.amount : null })),
+        paid: list.reduce((n, x) => n + (x.payments?.status === 'PAID' ? x.payments.amount : 0), 0),
+        notifications: notes.map((n) => ({ id: n.id, kind: n.kind, title: n.title, body: n.body, read: n.read, createdAt: n.createdAt })),
+      };
+    });
+
+    r.get('/admin/broadcasts', async () => {
+      const rows = await db.select().from(broadcasts).leftJoin(adminUsers, eq(adminUsers.id, broadcasts.adminId)).orderBy(desc(broadcasts.createdAt)).limit(50);
+      return rows.map((x) => ({ ...x.broadcasts, admin: x.admin_users?.name ?? '' }));
+    });
+
+    /** How many people a message would reach, before sending. */
+    r.post('/admin/broadcasts/preview', async (req) => {
+      const a = audienceBody.parse(req.body);
+      const t = await resolveAudience(a as Audience);
+      return { patients: t.users.length, counters: t.chambers.length };
+    });
+
     r.get('/admin/settlements', async (req) => {
       const { date } = z.object({ date: DATE.optional() }).parse(req.query);
       const d = date ?? addDays(istDate(), -1);
@@ -310,37 +381,58 @@ export async function adminRoutes(app: FastifyInstance) {
     });
 
     r.patch('/admin/doctors/:id', async (req) => {
-      const b = doctorBody.partial().extend({ photoUrl: z.string().nullable().optional() }).parse(req.body);
+      const b = doctorBody.partial().parse(req.body);
       const [row] = await db.update(doctors).set(b).where(eq(doctors.id, idParam(req))).returning();
       if (!row) throw notFound('Doctor');
       await audit(req, 'doctor.update', row.id, b);
       return row;
     });
 
-    /** Upload a doctor photo (PNG with a see-through background looks best, JPG and WebP also work). */
+    /** Upload or replace a doctor photo (PNG with a see-through background looks best, JPG and WebP also work). */
     r.post('/admin/doctors/:id/photo', async (req) => {
       const [d] = await db.select().from(doctors).where(eq(doctors.id, idParam(req)));
       if (!d) throw notFound('Doctor');
-      const file = await req.file();
-      if (!file) throw badRequest('no_file', 'Choose a photo');
-      const ext = ({ 'image/png': 'png', 'image/jpeg': 'jpg', 'image/webp': 'webp' } as Record<string, string>)[file.mimetype];
-      if (!ext) throw badRequest('bad_type', 'Use a PNG, JPG or WebP photo');
-      const buf = await file.toBuffer();
-      const sig = buf.subarray(0, 12).toString('hex');
-      const real = sig.startsWith('89504e47') ? 'png' : sig.startsWith('ffd8ff') ? 'jpg' : sig.startsWith('52494646') && buf.subarray(8, 12).toString() === 'WEBP' ? 'webp' : null;
-      if (real !== ext) throw badRequest('bad_type', 'This file is not a real image');
-      await mkdir(env.uploadDir, { recursive: true });
-      // Phone-friendly: cut empty see-through edges, at most 1000 px tall, WebP (keeps transparency, much smaller).
-      let out: Buffer;
-      try {
-        out = await sharp(buf).rotate().trim({ threshold: 1 }).resize({ height: 1000, width: 1000, fit: 'inside', withoutEnlargement: true }).webp({ quality: 84 }).toBuffer();
-      } catch {
-        throw badRequest('bad_image', 'This photo could not be read. Try another file.');
-      }
-      const name = `doctor-${randomUUID()}.webp`;
-      await writeFile(path.join(env.uploadDir, name), out);
-      const [row] = await db.update(doctors).set({ photoUrl: `/uploads/${name}` }).where(eq(doctors.id, d.id)).returning();
-      await audit(req, 'doctor.photo', d.id, { file: name });
+      const url = await saveUpload(req, 'doctor', { trim: true, max: 1000 });
+      const [row] = await db.update(doctors).set({ photoUrl: url }).where(eq(doctors.id, d.id)).returning();
+      await removeUpload(d.photoUrl);
+      await audit(req, 'doctor.photo', d.id, { file: url, replaced: d.photoUrl });
+      return row;
+    });
+
+    r.delete('/admin/doctors/:id/photo', async (req) => {
+      const [d] = await db.select().from(doctors).where(eq(doctors.id, idParam(req)));
+      if (!d) throw notFound('Doctor');
+      await db.update(doctors).set({ photoUrl: null }).where(eq(doctors.id, d.id));
+      await removeUpload(d.photoUrl);
+      await audit(req, 'doctor.photo', d.id, { removed: d.photoUrl });
+      return { ok: true };
+    });
+
+    /** Add a chamber photo, or replace one (?replace=<its url>). Up to 8 photos; the first is the cover. */
+    r.post('/admin/chambers/:id/photos', async (req) => {
+      const { replace } = z.object({ replace: z.string().optional() }).parse(req.query);
+      const [c] = await db.select().from(chambers).where(eq(chambers.id, idParam(req)));
+      if (!c) throw notFound('Chamber');
+      if (replace && !c.photos.includes(replace)) throw notFound('Photo');
+      if (!replace && c.photos.length >= 8) throw conflict('too_many', 'A chamber can have up to 8 photos. Remove one first.');
+      const url = await saveUpload(req, 'chamber', { trim: false, max: 1600 });
+      const photos = replace ? c.photos.map((p) => (p === replace ? url : p)) : [...c.photos, url];
+      const [row] = await db.update(chambers).set({ photos }).where(eq(chambers.id, c.id)).returning();
+      if (replace) await removeUpload(replace);
+      await audit(req, 'chamber.photos', c.id, { added: url, replaced: replace });
+      return row;
+    });
+
+    /** Reorder or delete chamber photos by sending the list to keep, in order. */
+    r.put('/admin/chambers/:id/photos', async (req) => {
+      const { photos } = z.object({ photos: z.array(z.string()).max(8) }).parse(req.body);
+      const [c] = await db.select().from(chambers).where(eq(chambers.id, idParam(req)));
+      if (!c) throw notFound('Chamber');
+      if (photos.some((p) => !c.photos.includes(p)) || new Set(photos).size !== photos.length) throw badRequest('bad_list', 'Unknown photo in the list');
+      const [row] = await db.update(chambers).set({ photos }).where(eq(chambers.id, c.id)).returning();
+      const removed = c.photos.filter((p) => !photos.includes(p));
+      for (const p of removed) await removeUpload(p);
+      await audit(req, 'chamber.photos', c.id, { order: photos.length, removed: removed.length });
       return row;
     });
 
@@ -371,22 +463,36 @@ export async function adminRoutes(app: FastifyInstance) {
       return sessionOut(row);
     });
 
-    /** Full refund by the team, for example when a patient complains. Frees the place if the sitting is still ahead. */
-    r.post('/admin/bookings/:id/refund', async (req) => {
-      const { reason } = z.object({ reason: z.string().trim().min(3).max(200) }).parse(req.body);
-      const [t] = await db.select().from(tokens).where(eq(tokens.id, idParam(req)));
-      if (!t) throw notFound('Booking');
-      const [pay] = await db.select().from(payments).where(eq(payments.tokenId, t.id));
-      if (!pay || pay.status !== 'PAID') throw conflict('not_paid', 'There is no payment to refund for this booking');
-      const before = t.state;
-      await refundToken(t.id);
-      if (['BOOKED', 'ARRIVED', 'HELD'].includes(before)) {
-        await db.update(sessions).set({ onlineTaken: sql`greatest(${sessions.onlineTaken} - 1, 0)` }).where(eq(sessions.id, t.sessionId));
-        await broadcastSession(t.sessionId);
-      }
-      if (t.userId) await notifyUser(t.userId, 'refunded', `Refund of ₹${pay.amount} started`, 'It goes back to the UPI account or card you paid from', { tokenId: t.id });
-      await audit(req, 'booking.refund', t.id, { reason, amount: pay.amount });
-      return { ok: true };
+    /** Send a message to patients or chamber counters. It goes out in the background. */
+    r.post('/admin/broadcasts', async (req) => {
+      const b = z.object({
+        audience: audienceBody, label: z.string().max(120), title: z.string().trim().min(2).max(80), body: z.string().trim().min(2).max(600),
+        whatsapp: z.boolean().default(false),
+      }).parse(req.body);
+      const t = await resolveAudience(b.audience as Audience);
+      if (!t.users.length && !t.chambers.length) throw conflict('nobody', 'Nobody matches this audience');
+      const counters = b.audience.kind === 'all_counters' || b.audience.kind === 'counter';
+      const channels = counters ? ['counter'] : ['app', 'push', ...(b.whatsapp ? ['whatsapp'] : [])];
+      const [row] = await db.insert(broadcasts).values({ adminId: req.admin!.id, audience: { ...b.audience, label: b.label }, title: b.title, body: b.body, channels, recipients: t.users.length + t.chambers.length }).returning();
+      await audit(req, 'broadcast.send', row.id, { to: b.label, title: b.title, recipients: row.recipients, channels: channels.join(' ') });
+      runBroadcast(row.id).catch(async (e) => { req.log.error(e); await db.update(broadcasts).set({ status: 'FAILED' }).where(eq(broadcasts.id, row.id)); });
+      return row;
+    });
+
+    /** Move a booking to another sitting of the same doctor (the no-refund way to fix a problem). */
+    r.post('/admin/bookings/:id/move', async (req) => {
+      const { sessionId, reason } = z.object({ sessionId: z.string(), reason: z.string().trim().min(3).max(200) }).parse(req.body);
+      const moved = await adminMove(idParam(req), sessionId);
+      await audit(req, 'booking.move', idParam(req), { reason, to: sessionId, serial: moved.number });
+      return { id: moved.id, number: moved.number };
+    });
+
+    /** Upcoming sittings of a doctor, to pick where to move a booking. */
+    r.get('/admin/doctors/:id/upcoming', async (req) => {
+      const rows = await db.select().from(sessions).innerJoin(chambers, eq(chambers.id, sessions.chamberId))
+        .where(and(eq(sessions.doctorId, idParam(req)), gte(sessions.date, istDate()), lte(sessions.date, addDays(istDate(), 30)), eq(sessions.status, 'OPEN')))
+        .orderBy(asc(sessions.date), asc(sessions.startTime));
+      return rows.map((x) => ({ ...sessionOut(x.sessions), chamber: x.chambers.name, left: Math.max(0, Math.min(x.sessions.onlineLimit - x.sessions.onlineTaken, x.sessions.tokenLimit - x.sessions.onlineTaken - x.sessions.counterTaken)) }));
     });
 
     r.post('/admin/settlements/generate', async (req) => {
@@ -408,6 +514,61 @@ export async function adminRoutes(app: FastifyInstance) {
       if (!row) throw conflict('not_pending', 'This settlement is already marked paid');
       await audit(req, 'settlement.paid', row.id, { reference, amount: row.amount });
       return row;
+    });
+
+    /**
+     * Owner only, and only for payment errors (for example charged twice by the bank).
+     * MedicSeba has a no-refund policy; everything else is fixed by moving the serial.
+     */
+    r.post('/admin/bookings/:id/refund', async (req) => {
+      const { reason } = z.object({ reason: z.string().trim().min(3).max(200) }).parse(req.body);
+      const [t] = await db.select().from(tokens).where(eq(tokens.id, idParam(req)));
+      if (!t) throw notFound('Booking');
+      const [pay] = await db.select().from(payments).where(eq(payments.tokenId, t.id));
+      if (!pay || pay.status !== 'PAID') throw conflict('not_paid', 'There is no payment to refund for this booking');
+      const before = t.state;
+      await refundToken(t.id);
+      if (['BOOKED', 'ARRIVED', 'HELD'].includes(before)) {
+        await db.update(sessions).set({ onlineTaken: sql`greatest(${sessions.onlineTaken} - 1, 0)` }).where(eq(sessions.id, t.sessionId));
+        await broadcastSession(t.sessionId);
+      }
+      if (t.userId) await notifyUser(t.userId, 'refunded', `Refund of ₹${pay.amount} started`, 'It goes back to the UPI account or card you paid from', { tokenId: t.id });
+      await audit(req, 'booking.refund', t.id, { reason, amount: pay.amount, kind: 'payment error' });
+      return { ok: true };
+    });
+
+    r.get('/admin/settings/notifications', async () => {
+      const [{ withPush }] = await db.select({ withPush: sql<number>`count(*) filter (where cardinality(${users.pushTokens}) > 0)::int` }).from(users);
+      return {
+        settings: await getNotifySettings(),
+        events: WHATSAPP_EVENTS,
+        status: {
+          whatsapp: whatsappConfigured(),
+          sms: env.smsProvider === 'msg91' ? 'msg91' : 'test',
+          payments: env.paymentProvider,
+          pushDevices: withPush,
+        },
+        log: await recentMessageLog(20),
+      };
+    });
+
+    r.put('/admin/settings/notifications', async (req) => {
+      const v = z.object({ whatsapp: z.object({ enabled: z.boolean(), template: z.string().trim().regex(/^[a-z0-9_]{1,512}$/, 'Template names use small letters, numbers and _'), events: z.record(z.string(), z.boolean()) }) }).parse(req.body);
+      await saveNotifySettings(v as NotifySettings);
+      await audit(req, 'settings.update', 'notifications', { whatsapp: v.whatsapp.enabled, template: v.whatsapp.template });
+      return getNotifySettings();
+    });
+
+    r.post('/admin/settings/notifications/test', async (req) => {
+      const { phone } = z.object({ phone: z.string() }).parse(req.body);
+      const to = phone.replace(/\D/g, '').replace(/^(\d{10})$/, '91$1');
+      if (!/^91[6-9]\d{9}$/.test(to)) throw badRequest('bad_phone', 'Enter a 10-digit Indian mobile number');
+      try {
+        await sendWhatsApp(to, 'MedicSeba test', 'WhatsApp messages from MedicSeba are working.', { kind: 'test' });
+      } catch (e) {
+        throw new ApiError(502, 'whatsapp_failed', (e as Error).message);
+      }
+      return { ok: true };
     });
 
     r.get('/admin/team', async () => db.select({ id: adminUsers.id, username: adminUsers.username, name: adminUsers.name, role: adminUsers.role, active: adminUsers.active, lastLoginAt: adminUsers.lastLoginAt })

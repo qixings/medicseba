@@ -9,7 +9,7 @@ import type { Note } from '@/lib/types';
 import { Icon, type IconName } from '@/components/Icon';
 import { Card, Page, Status, T, TopBar } from '@/components/ui';
 
-const ICON: Record<string, IconName> = { booked: 'check', arrived: 'steth', late: 'clock', not_coming: 'alert', refunded: 'refund', moved: 'move', near: 'bell' };
+const ICON: Record<string, IconName> = { booked: 'check', arrived: 'steth', late: 'clock', not_coming: 'alert', refunded: 'refund', moved: 'move', ahead5: 'bell', ahead2: 'bell', broadcast: 'bell' };
 
 function ago(iso: string) {
   const m = Math.round((Date.now() - new Date(iso).getTime()) / 60000);

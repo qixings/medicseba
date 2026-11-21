@@ -47,9 +47,9 @@ export async function setSessionLimits(sessionId: string, p: { tokenLimit?: numb
     if (!s) throw conflict('not_found', 'Sitting not found');
     const tokenLimit = p.tokenLimit ?? s.tokenLimit;
     const onlineLimit = p.onlineLimit ?? s.onlineLimit;
-    if (tokenLimit < s.onlineTaken + s.counterTaken) throw conflict('below_taken', `${s.onlineTaken + s.counterTaken} tokens are already given; the limit cannot be lower`);
-    if (onlineLimit < s.onlineTaken) throw conflict('below_taken', `${s.onlineTaken} online tokens are already booked; the online limit cannot be lower`);
-    if (onlineLimit > tokenLimit) throw conflict('online_over_total', 'Online tokens cannot be more than the total');
+    if (tokenLimit < s.onlineTaken + s.counterTaken) throw conflict('below_taken', `${s.onlineTaken + s.counterTaken} serials are already given; the limit cannot be lower`);
+    if (onlineLimit < s.onlineTaken) throw conflict('below_taken', `${s.onlineTaken} online serials are already booked; the online limit cannot be lower`);
+    if (onlineLimit > tokenLimit) throw conflict('online_over_total', 'Online serials cannot be more than the total');
     const [row] = await tx.update(sessions).set({ tokenLimit, onlineLimit }).where(eq(sessions.id, sessionId)).returning();
     return row;
   });

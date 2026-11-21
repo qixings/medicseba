@@ -1,11 +1,11 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
-import { api, dayName, Drawer, Field, Loading, Pill, prettyTime, rupee, useAction, useAuth, useLoad } from '../lib';
+import { api, dayName, Drawer, Field, Loading, PasswordInput, Pill, prettyTime, rupee, useAction, useAuth, useLoad } from '../lib';
 
 type Agent = { id: string; username: string; active: boolean };
 type Chamber = {
   id: string; name: string; kind: 'PHARMACY' | 'OWN'; address: string; area: string; landmark: string; lat: number | null; lng: number | null;
-  phone: string; openingHours: string; bookingFee: number; platformFee: number; visible: boolean; agents: Agent[];
+  phone: string; openingHours: string; bookingFee: number; platformFee: number; visible: boolean; photos: string[]; agents: Agent[];
   schedules: { id: string; weekdays: number[]; startTime: string; tokenLimit: number; active: boolean; doctor: { id: string; name: string } }[];
 };
 
@@ -73,7 +73,7 @@ export default function ChamberEdit() {
               <div />
               <Field label="Booking fee, goes to the chamber (₹)"><input className="input" type="number" min={0} value={f.bookingFee} onChange={(e) => set('bookingFee', Number(e.target.value))} /></Field>
               <Field label="Service fee, goes to MedicSeba (₹)"><input className="input" type="number" min={0} value={f.platformFee} onChange={(e) => set('platformFee', Number(e.target.value))} /></Field>
-              <div className="full muted">Patients pay <b className="num">{rupee(f.bookingFee + f.platformFee)}</b> per online token.</div>
+              <div className="full muted">Patients pay <b className="num">{rupee(f.bookingFee + f.platformFee)}</b> per online serial.</div>
               <label className="check full"><input type="checkbox" checked={f.visible} onChange={(e) => set('visible', e.target.checked)} /> Show this chamber in the patient app</label>
             </div>
           </fieldset>
@@ -81,6 +81,7 @@ export default function ChamberEdit() {
 
         {!isNew ? (
           <div style={{ display: 'grid', gap: 16 }}>
+            <Photos chamberId={id!} photos={x!.photos} edit={edit} onChange={() => void c.reload()} />
             <div className="card flush">
               <div className="row" style={{ padding: '16px 18px 4px', justifyContent: 'space-between' }}>
                 <h2 style={{ margin: 0 }}>Counter logins</h2>
@@ -110,7 +111,7 @@ export default function ChamberEdit() {
                       <td className="strong"><Link to={`/doctors/${s.doctor.id}`}>{s.doctor.name}</Link></td>
                       <td>{s.weekdays.map(dayName).join(', ')}</td>
                       <td className="num">{prettyTime(s.startTime)}</td>
-                      <td className="right num">{s.tokenLimit} tokens</td>
+                      <td className="right num">{s.tokenLimit} serials</td>
                     </tr>
                   ))}</tbody>
                 </table>
@@ -132,7 +133,7 @@ function LoginDrawer({ chamberId, a, onClose, onSaved }: { chamberId: string; a:
     <Drawer title={a ? `Login ${a.username}` : 'New counter login'} onClose={onClose}>
       <div className="card" style={{ display: 'grid', gap: 14 }}>
         {!a ? <Field label="Login name"><input className="input" value={username} onChange={(e) => setUsername(e.target.value.toLowerCase())} placeholder="citymedicos" autoComplete="off" /></Field> : null}
-        <Field label={a ? 'New password' : 'Password'}><input className="input" type="password" value={password} onChange={(e) => setPassword(e.target.value)} autoComplete="new-password" /></Field>
+        <PasswordInput label={a ? 'New password' : 'Password'} value={password} onChange={setPassword} />
         <p className="muted small" style={{ margin: 0 }}>At least 8 characters. Give it to the chamber staff in person.</p>
         <button className="btn primary" disabled={busy || password.length < 8 || (!a && username.length < 3)} onClick={async () => {
           const ok = await run(() => a ? api(`/admin/agents/${a.id}`, { method: 'PATCH', body: { password } }) : api(`/admin/chambers/${chamberId}/agents`, { body: { username, password } }), a ? 'Password changed' : 'Login added');
@@ -145,5 +146,52 @@ function LoginDrawer({ chamberId, a, onClose, onSaved }: { chamberId: string; a:
         ) : null}
       </div>
     </Drawer>
+  );
+}
+
+/** Chamber photos: add, replace, reorder and delete. The first one is the cover in the patient app. */
+function Photos({ chamberId, photos, edit, onChange }: { chamberId: string; photos: string[]; edit: boolean; onChange: () => void }) {
+  const { run, busy } = useAction();
+  const addRef = useRef<HTMLInputElement>(null);
+  const replaceRef = useRef<HTMLInputElement>(null);
+  const [replacing, setReplacing] = useState<string | null>(null);
+
+  async function upload(file: File, replace?: string | null) {
+    const form = new FormData(); form.append('photo', file);
+    const q = replace ? `?replace=${encodeURIComponent(replace)}` : '';
+    if (await run(() => api(`/admin/chambers/${chamberId}/photos${q}`, { form }), replace ? 'Photo replaced' : 'Photo added')) onChange();
+  }
+  async function save(list: string[], msg: string) {
+    if (await run(() => api(`/admin/chambers/${chamberId}/photos`, { method: 'PUT', body: { photos: list } }), msg)) onChange();
+  }
+  const move = (i: number, by: number) => { const l = [...photos]; const [p] = l.splice(i, 1); l.splice(i + by, 0, p); void save(l, 'Order saved'); };
+
+  return (
+    <div className="card">
+      <div className="row" style={{ justifyContent: 'space-between', marginBottom: 12 }}>
+        <h2 style={{ margin: 0 }}>Photos</h2>
+        {edit && photos.length < 8 ? <button className="btn sm primary" disabled={busy} onClick={() => addRef.current?.click()}>Add photo</button> : null}
+      </div>
+      <input ref={addRef} type="file" accept="image/png,image/jpeg,image/webp" hidden onChange={(e) => { const f = e.target.files?.[0]; if (f) void upload(f); e.target.value = ''; }} />
+      <input ref={replaceRef} type="file" accept="image/png,image/jpeg,image/webp" hidden onChange={(e) => { const f = e.target.files?.[0]; if (f) void upload(f, replacing); e.target.value = ''; setReplacing(null); }} />
+      {photos.length === 0 ? <p className="muted" style={{ margin: 0 }}>No photos yet. A clear photo of the front of the chamber helps patients find it. The first photo is the cover.</p> : (
+        <div className="thumbs">
+          {photos.map((p, i) => (
+            <figure key={p} className="thumb">
+              <img src={p} alt={`Photo ${i + 1}`} />
+              {i === 0 ? <span className="pill teal cover">Cover</span> : null}
+              {edit ? (
+                <figcaption>
+                  <button className="btn sm" disabled={busy || i === 0} onClick={() => move(i, -1)} aria-label="Move left">←</button>
+                  <button className="btn sm" disabled={busy || i === photos.length - 1} onClick={() => move(i, 1)} aria-label="Move right">→</button>
+                  <button className="btn sm" disabled={busy} onClick={() => { setReplacing(p); replaceRef.current?.click(); }}>Replace</button>
+                  <button className="btn sm danger" disabled={busy} onClick={() => { if (window.confirm('Delete this photo?')) void save(photos.filter((x) => x !== p), 'Photo deleted'); }}>Delete</button>
+                </figcaption>
+              ) : null}
+            </figure>
+          ))}
+        </div>
+      )}
+    </div>
   );
 }

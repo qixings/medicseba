@@ -235,3 +235,17 @@ export function BottomBar({ children }: { children: React.ReactNode }) {
 }
 
 export const rupee = (n: number) => `₹${n}`;
+
+/** Password box with a show/hide eye button. */
+export function PasswordField({ label, value, onChangeText, onSubmitEditing }: { label: string; value: string; onChangeText: (v: string) => void; onSubmitEditing?: () => void }) {
+  const [show, setShow] = useState(false);
+  return (
+    <View>
+      <Field label={label} value={value} onChangeText={onChangeText} secureTextEntry={!show} autoCapitalize="none" autoCorrect={false} autoComplete="password" onSubmitEditing={onSubmitEditing} style={{ paddingRight: 52 }} />
+      <Pressable accessibilityRole="button" accessibilityLabel={show ? 'Hide password' : 'Show password'} onPress={() => { tap(); setShow(!show); }} hitSlop={8}
+        style={{ position: 'absolute', right: 6, bottom: 5, width: 44, height: 44, alignItems: 'center', justifyContent: 'center' }}>
+        <Icon name={show ? 'eyeOff' : 'eye'} size={20} color={C.sec} />
+      </Pressable>
+    </View>
+  );
+}

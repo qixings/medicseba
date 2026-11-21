@@ -43,10 +43,10 @@ export async function holdToken(userId: string, sessionId: string, memberId: str
     const s = await lockSession(tx, sessionId);
     if (!isBookable(s, await windowFor(tx, s.doctorId))) {
       const full = onlineLeft(s) === 0;
-      throw conflict(full ? 'session_full' : 'session_closed', full ? 'This session is full' : 'Booking is closed for this session');
+      throw conflict(full ? 'session_full' : 'session_closed', full ? 'This sitting is full' : 'Booking is closed for this sitting');
     }
     const mine = await tx.select().from(tokens).where(and(eq(tokens.sessionId, sessionId), eq(tokens.userId, userId), inArray(tokens.state, ACTIVE)));
-    if (mine.some((t) => t.memberId === memberId)) throw conflict('already_booked', `${member.name} already has a token for this session`);
+    if (mine.some((t) => t.memberId === memberId)) throw conflict('already_booked', `${member.name} already has a serial for this sitting`);
     if (mine.length >= MAX_PER_PHONE) throw conflict('phone_limit', `One phone can book up to ${MAX_PER_PHONE} tokens per session`);
     await tx.update(sessions).set({ onlineTaken: inc(sessions.onlineTaken) }).where(eq(sessions.id, s.id));
     const [t] = await tx.insert(tokens).values({
@@ -92,11 +92,11 @@ export async function confirmPayment(orderId: string, paymentId: string, signatu
 
   if (result.lateFail) {
     await refundToken(result.token.id);
-    throw conflict('session_full', `The session filled up while you were paying. Your ₹${pay.amount} is being refunded`);
+    throw conflict('session_full', `The sitting filled up while you were paying. Your ₹${pay.amount} is being refunded`);
   }
   const t = result.token;
   const { session: s, doctor, chamber } = await sessionWithRefs(t.sessionId);
-  if (t.userId) await notifyUser(t.userId, 'booked', `Token ${t.number} booked`, `${doctor.name}, ${chamber.name}, ${prettyDate(s.date)}, ${prettyTime(s.startTime)}`, { tokenId: t.id });
+  if (t.userId) await notifyUser(t.userId, 'booked', `Serial ${t.number} booked`, `${doctor.name}, ${chamber.name}, ${prettyDate(s.date)}, ${prettyTime(s.startTime)}`, { tokenId: t.id });
   await broadcastSession(s.id);
   return t;
 }
@@ -122,20 +122,20 @@ async function ownedToken(userId: string, tokenId: string) {
 }
 
 /** Move a booked token to another session of the same doctor. */
-async function moveToken(tokenId: string, targetSessionId: string, opts: { countAsReschedule: boolean }) {
+async function moveToken(tokenId: string, targetSessionId: string, opts: { countAsReschedule: boolean; states?: TokenState[] }) {
   const [t0] = await db.select().from(tokens).where(eq(tokens.id, tokenId));
-  if (t0.sessionId === targetSessionId) throw badRequest('same_session', 'Pick a different session');
+  if (t0.sessionId === targetSessionId) throw badRequest('same_session', 'Pick a different sitting');
   const [a, b] = [t0.sessionId, targetSessionId].sort();
   const moved = await db.transaction(async (tx) => {
     const sa = await lockSession(tx, a);
     const sb = await lockSession(tx, b);
     const from = sa.id === t0.sessionId ? sa : sb;
     const to = sa.id === targetSessionId ? sa : sb;
-    if (to.doctorId !== from.doctorId) throw badRequest('other_doctor', 'You can only move to a session of the same doctor');
-    if (!isBookable(to, await windowFor(tx, to.doctorId))) throw conflict('session_full', 'That session is full or closed');
+    if (to.doctorId !== from.doctorId) throw badRequest('other_doctor', 'You can only move to a sitting of the same doctor');
+    if (!isBookable(to, await windowFor(tx, to.doctorId))) throw conflict('session_full', 'That sitting is full or closed');
     const [t] = await tx.select().from(tokens).where(eq(tokens.id, tokenId));
-    if (t.state !== 'BOOKED') throw conflict('not_movable', 'This booking can no longer be moved');
-    await tx.update(tokens).set({ state: 'MOVED' }).where(eq(tokens.id, t.id));
+    if (!(opts.states ?? ['BOOKED']).includes(t.state)) throw conflict('not_movable', 'This booking can no longer be moved');
+    await tx.update(tokens).set({ state: 'MOVED', absentChoice: t.absentChoice ? 'move' : null }).where(eq(tokens.id, t.id));
     if (from.status !== 'CANCELLED') await tx.update(sessions).set({ onlineTaken: inc(sessions.onlineTaken, -1) }).where(eq(sessions.id, from.id));
     await tx.update(sessions).set({ onlineTaken: inc(sessions.onlineTaken), nextNumber: inc(sessions.nextNumber) }).where(eq(sessions.id, to.id));
     const [created] = await tx.insert(tokens).values({
@@ -153,13 +153,13 @@ async function moveToken(tokenId: string, targetSessionId: string, opts: { count
 
 export async function reschedule(userId: string, tokenId: string, targetSessionId: string) {
   const t = await ownedToken(userId, tokenId);
-  if (t.state !== 'BOOKED') throw conflict('not_movable', 'Only booked tokens can be moved');
+  if (t.state !== 'BOOKED') throw conflict('not_movable', 'Only booked serials can be moved');
   if (t.rescheduleUsed) throw conflict('reschedule_used', 'This booking was already moved once');
   if (Date.now() > t.session.startsAt.getTime() - env.rescheduleCutoffMinutes * 60_000) {
-    throw conflict('too_late', `Bookings can be moved up to ${env.rescheduleCutoffMinutes / 60} hours before the session`);
+    throw conflict('too_late', `Bookings can be moved up to ${env.rescheduleCutoffMinutes / 60} hours before the sitting`);
   }
   const moved = await moveToken(tokenId, targetSessionId, { countAsReschedule: true });
-  await notifyUser(userId, 'moved', `Booking moved, token ${moved.number}`, 'Your booking was moved to a new session', { tokenId: moved.id });
+  await notifyUser(userId, 'moved', `Booking moved, serial ${moved.number}`, 'Your booking was moved to a new sitting', { tokenId: moved.id });
   return moved;
 }
 
@@ -185,18 +185,27 @@ export async function refundToken(tokenId: string) {
   return t;
 }
 
-/** After the doctor cancels: the patient picks a full refund or a free move. */
-export async function absentChoice(userId: string, tokenId: string, choice: 'refund' | 'move', targetSessionId?: string) {
+/**
+ * After the doctor cancels, the patient moves the booking to another sitting for free.
+ * MedicSeba has a no-refund policy: problems on our side are fixed by moving the serial, not by refunds.
+ */
+export async function absentChoice(userId: string, tokenId: string, targetSessionId: string) {
   const t = await ownedToken(userId, tokenId);
   if (t.session.doctorStatus !== 'NOT_COMING' || t.state !== 'BOOKED') throw conflict('no_choice', 'There is nothing to choose for this booking');
-  if (choice === 'refund') {
-    const r = await refundToken(t.id);
-    await notifyUser(userId, 'refunded', `Refund of ₹${t.payment?.amount ?? 0} started`, 'It goes back to the UPI account or card you paid from', { tokenId: t.id });
-    return r;
-  }
-  if (!targetSessionId) throw badRequest('pick_session', 'Pick the session to move to');
   const moved = await moveToken(t.id, targetSessionId, { countAsReschedule: false });
-  await notifyUser(userId, 'moved', `Moved, token ${moved.number}`, 'Your booking was moved to the next session', { tokenId: moved.id });
+  await notifyUser(userId, 'moved', `Moved, serial ${moved.number}`, 'Your booking was moved to the sitting you picked', { tokenId: moved.id });
+  return moved;
+}
+
+/** The team moves a booking (for example the doctor did not come, or the patient called support). Free, and it does not use up the patient's own reschedule. */
+export async function adminMove(tokenId: string, targetSessionId: string) {
+  const [t] = await db.select().from(tokens).where(eq(tokens.id, tokenId));
+  if (!t) throw notFound('Booking');
+  const moved = await moveToken(tokenId, targetSessionId, { countAsReschedule: false, states: ['BOOKED', 'ARRIVED', 'MISSED'] });
+  if (t.userId) {
+    const { doctor, chamber, session } = await sessionWithRefs(moved.sessionId);
+    await notifyUser(t.userId, 'moved', `Moved, serial ${moved.number}`, `${doctor.name}, ${chamber.name}, ${prettyDate(session.date)} ${prettyTime(session.startTime)}`, { tokenId: moved.id });
+  }
   return moved;
 }
 
@@ -219,7 +228,7 @@ export async function addWalkIn(chamberId: string, sessionId: string, p: { name:
   const t = await db.transaction(async (tx) => {
     const s = await lockSession(tx, sessionId);
     if (s.status === 'CANCELLED' || s.status === 'ENDED') throw conflict('session_closed', 'This sitting is over');
-    if (s.onlineTaken + s.counterTaken >= s.tokenLimit) throw conflict('session_full', 'No tokens left in this sitting');
+    if (s.onlineTaken + s.counterTaken >= s.tokenLimit) throw conflict('session_full', 'No serials left in this sitting');
     await tx.update(sessions).set({ counterTaken: inc(sessions.counterTaken), nextNumber: inc(sessions.nextNumber) }).where(eq(sessions.id, s.id));
     const [row] = await tx.insert(tokens).values({
       sessionId, number: s.nextNumber, source: 'WALKIN', state: 'ARRIVED', patientName: p.name,
@@ -269,7 +278,7 @@ export type TokenAction = 'arrived' | 'missed' | 'done' | 'call' | 'restore';
  */
 export async function tokenAction(chamberId: string, tokenId: string, action: TokenAction) {
   const [t] = await db.select().from(tokens).where(eq(tokens.id, tokenId));
-  if (!t || t.number === null) throw notFound('Token');
+  if (!t || t.number === null) throw notFound('Serial');
   await agentSession(chamberId, t.sessionId);
   await db.transaction(async (tx) => {
     const s = await lockSession(tx, t.sessionId);
@@ -305,11 +314,11 @@ export async function setDoctorStatus(chamberId: string, sessionId: string, stat
   for (const t of waiting) {
     if (status === 'NOT_COMING') {
       await db.update(tokens).set({ absentChoice: 'pending' }).where(eq(tokens.id, t.id));
-      await notifyUser(t.userId!, 'not_coming', `${doctor.name} can't come today`, 'Choose a full refund or a move to the next session', { tokenId: t.id });
+      await notifyUser(t.userId!, 'not_coming', `${doctor.name} can't come today`, 'Pick another sitting in the app. Moving is free.', { tokenId: t.id });
     } else if (status === 'ARRIVED' && s.doctorStatus !== 'ARRIVED') {
-      await notifyUser(t.userId!, 'arrived', 'Doctor has arrived', `${chamber.name}, token ${t.number}`, { tokenId: t.id });
+      await notifyUser(t.userId!, 'arrived', 'Doctor has arrived', `${chamber.name}, serial ${t.number}`, { tokenId: t.id });
     } else if (status === 'LATE') {
-      await notifyUser(t.userId!, 'late', `Doctor running ${lateMinutes} min late`, `${chamber.name}, token ${t.number}`, { tokenId: t.id });
+      await notifyUser(t.userId!, 'late', `Doctor running ${lateMinutes} min late`, `${chamber.name}, serial ${t.number}`, { tokenId: t.id });
     }
   }
   await broadcastSession(sessionId);

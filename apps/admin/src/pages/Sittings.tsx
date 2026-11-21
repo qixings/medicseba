@@ -16,7 +16,7 @@ export default function Sittings() {
       <div className="head">
         <div>
           <h1>Sittings</h1>
-          <div className="sub">Change the token limits of one sitting. Weekly times and limits are set on each doctor's page.</div>
+          <div className="sub">Change the serial limits of one sitting. Weekly times and limits are set on each doctor's page.</div>
         </div>
         <div className="row">
           <select className="input" value={chamberId} onChange={(e) => setChamberId(e.target.value)} aria-label="Chamber">
