@@ -5,7 +5,7 @@ type Row = { id: string; admin: string; action: string; target: string | null; d
 const TEXT: Record<string, string> = {
   'doctor.create': 'Added a doctor', 'doctor.update': 'Changed a doctor', 'doctor.photo': 'Uploaded a doctor photo',
   'chamber.create': 'Added a chamber', 'chamber.update': 'Changed a chamber', 'agent.create': 'Added a counter login', 'agent.update': 'Changed a counter login',
-  'schedule.create': 'Added a sitting time', 'schedule.update': 'Changed a sitting time', 'session.limits': 'Changed sitting limits',
+  'schedule.create': 'Added a sitting time', 'schedule.update': 'Changed a sitting time', 'schedule.move': 'Moved a sitting to another chamber', 'schedule.remove': 'Removed a sitting', 'doctor.remove': 'Removed a doctor', 'chamber.remove': 'Removed a chamber', 'session.limits': 'Changed sitting limits',
   'booking.refund': 'Refunded a payment error', 'booking.move': 'Moved a serial', 'broadcast.send': 'Sent a message', 'chamber.photos': 'Changed chamber photos', 'settings.update': 'Changed notification settings', 'request.approve': 'Approved a chamber request', 'request.reject': 'Rejected a chamber request', 'chamber.self_update': 'Chamber changed its details', 'settlement.generate': 'Settled a day', 'settlement.paid': 'Paid a chamber',
   'specialty.create': 'Added a specialty', 'specialty.update': 'Changed a specialty', 'team.create': 'Added a team member', 'team.update': 'Changed a team member',
 };

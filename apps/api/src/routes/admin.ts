@@ -7,7 +7,7 @@ import { createReadStream, existsSync } from 'node:fs';
 import { mkdir, unlink, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { z } from 'zod';
-import { and, asc, desc, eq, gte, ilike, isNotNull, lte, or, sql } from 'drizzle-orm';
+import { and, asc, desc, eq, gte, ilike, isNotNull, isNull, lte, or, sql } from 'drizzle-orm';
 import { db, schema } from '../db.js';
 import { requireAdmin, signAdmin } from '../auth.js';
 import { ApiError, badRequest, conflict, notFound } from '../errors.js';
@@ -16,7 +16,7 @@ import { adminMove, refundToken } from '../booking.js';
 import { receiptUrl } from '../receipts.js';
 import { getNotifySettings, notifyUser, recentMessageLog, resolveAudience, runBroadcast, saveNotifySettings, sendWhatsApp, whatsappConfigured, WHATSAPP_EVENTS, type Audience, type NotifySettings } from '../notify.js';
 import { broadcastSession } from '../queue.js';
-import { applySchedule, generateSettlements, setSessionLimits, settlementPreview } from '../admin-logic.js';
+import { applySchedule, createSchedule, generateSettlements, removeChamber, removeDoctor, removeSchedule, setSessionLimits, settlementPreview } from '../admin-logic.js';
 import { addDays, istDate, prettyTime } from '../time.js';
 
 const { adminUsers, auditLog, agentAccounts, chambers, doctors, specialties, schedules, sessions, tokens, payments, users, settlements, familyMembers, notifications, broadcasts, changeRequests } = schema;
@@ -71,6 +71,14 @@ const doctorBody = z.object({
   visible: z.boolean().default(true),
 });
 
+/** A doctor added straight from a chamber page: just enough to list them; the rest can be filled in later. */
+const quickDoctorBody = doctorBody.extend({
+  experienceYears: z.number().int().min(0).max(70).default(0),
+  consultFee: z.number().int().min(0).max(10000).default(0),
+  languages: z.array(z.string().trim().min(1)).max(8).default(['Bengali']),
+  bookingWindowDays: z.number().int().min(1).max(60).default(7),
+});
+
 const scheduleBody = z.object({
   chamberId: z.string(),
   weekdays: z.array(z.number().int().min(0).max(6)).min(1).max(7),
@@ -79,6 +87,13 @@ const scheduleBody = z.object({
   onlineShare: z.number().int().min(0).max(100),
   active: z.boolean().default(true),
 });
+
+/** A sitting added from a chamber page: an existing doctor, or a new one created on the spot. */
+const chamberSittingBody = scheduleBody.omit({ chamberId: true }).extend({
+  doctorId: z.string().optional(),
+  newDoctor: quickDoctorBody.optional(),
+}).refine((x) => !!x.doctorId !== !!x.newDoctor, 'Pick a doctor or add a new one');
+
 
 function sessionOut(s: typeof sessions.$inferSelect) {
   return {
@@ -127,6 +142,23 @@ export async function uploadRoutes(app: FastifyInstance) {
     const type = name.endsWith('.png') ? 'image/png' : name.endsWith('.webp') ? 'image/webp' : 'image/jpeg';
     return reply.header('cache-control', 'public, max-age=31536000, immutable').type(type).send(createReadStream(file));
   });
+}
+
+/** Create the sitting, first creating the doctor if they are new. */
+async function addChamberSitting(req: FastifyRequest, chamberId: string, x: z.infer<typeof chamberSittingBody>) {
+  let doctorId = x.doctorId;
+  if (x.newDoctor) {
+    const [d] = await db.insert(doctors).values(x.newDoctor).returning();
+    await audit(req, 'doctor.create', d.id, x.newDoctor);
+    doctorId = d.id;
+  } else {
+    const [d] = await db.select().from(doctors).where(and(eq(doctors.id, doctorId!), isNull(doctors.removedAt)));
+    if (!d) throw notFound('Doctor');
+  }
+  const { doctorId: _a, newDoctor: _b, ...sitting } = x;
+  const out = await createSchedule(doctorId!, { ...sitting, chamberId });
+  await audit(req, 'schedule.create', out.schedule.id, { ...sitting, chamberId, doctorId });
+  return { ...out, doctorId };
 }
 
 export async function adminRoutes(app: FastifyInstance) {
@@ -178,7 +210,7 @@ export async function adminRoutes(app: FastifyInstance) {
     r.get('/admin/specialties', async () => db.select().from(specialties).orderBy(asc(specialties.order), asc(specialties.name)));
 
     r.get('/admin/chambers', async () => {
-      const list = await db.select().from(chambers).orderBy(asc(chambers.name));
+      const list = await db.select().from(chambers).where(isNull(chambers.removedAt)).orderBy(asc(chambers.name));
       const docs = await db.select({ chamberId: schedules.chamberId, n: sql<number>`count(distinct ${schedules.doctorId})::int` }).from(schedules).where(eq(schedules.active, true)).groupBy(schedules.chamberId);
       const logins = await db.select({ chamberId: agentAccounts.chamberId, n: sql<number>`count(*)::int` }).from(agentAccounts).where(eq(agentAccounts.active, true)).groupBy(agentAccounts.chamberId);
       return list.map((c) => ({ ...c, doctors: docs.find((x) => x.chamberId === c.id)?.n ?? 0, logins: logins.find((x) => x.chamberId === c.id)?.n ?? 0 }));
@@ -189,14 +221,15 @@ export async function adminRoutes(app: FastifyInstance) {
       if (!c) throw notFound('Chamber');
       const agents = await db.select({ id: agentAccounts.id, username: agentAccounts.username, active: agentAccounts.active, createdAt: agentAccounts.createdAt })
         .from(agentAccounts).where(eq(agentAccounts.chamberId, c.id)).orderBy(asc(agentAccounts.username));
-      const sch = await db.select().from(schedules).innerJoin(doctors, eq(doctors.id, schedules.doctorId)).where(eq(schedules.chamberId, c.id)).orderBy(asc(schedules.startTime));
-      return { ...c, agents, schedules: sch.map((x) => ({ ...x.schedules, doctor: { id: x.doctors.id, name: x.doctors.name } })) };
+      const sch = await db.select().from(schedules).innerJoin(doctors, eq(doctors.id, schedules.doctorId)).innerJoin(specialties, eq(specialties.id, doctors.specialtyId))
+        .where(and(eq(schedules.chamberId, c.id), isNull(schedules.removedAt))).orderBy(asc(schedules.startTime));
+      return { ...c, agents, schedules: sch.map((x) => ({ ...x.schedules, doctor: { id: x.doctors.id, name: x.doctors.name, specialty: x.specialties.name, photoUrl: x.doctors.photoUrl } })) };
     });
 
     r.get('/admin/doctors', async (req) => {
       const { q } = z.object({ q: z.string().optional() }).parse(req.query);
       const rows = await db.select().from(doctors).innerJoin(specialties, eq(specialties.id, doctors.specialtyId))
-        .where(q ? ilike(doctors.name, `%${q}%`) : undefined).orderBy(asc(doctors.name));
+        .where(and(isNull(doctors.removedAt), q ? ilike(doctors.name, `%${q}%`) : undefined)).orderBy(asc(doctors.name));
       const sch = await db.select({ doctorId: schedules.doctorId, n: sql<number>`count(*)::int` }).from(schedules).where(eq(schedules.active, true)).groupBy(schedules.doctorId);
       return rows.map((x) => ({ ...x.doctors, specialty: x.specialties.name, schedules: sch.find((s) => s.doctorId === x.doctors.id)?.n ?? 0 }));
     });
@@ -204,7 +237,7 @@ export async function adminRoutes(app: FastifyInstance) {
     r.get('/admin/doctors/:id', async (req) => {
       const [d] = await db.select().from(doctors).where(eq(doctors.id, idParam(req)));
       if (!d) throw notFound('Doctor');
-      const sch = await db.select().from(schedules).innerJoin(chambers, eq(chambers.id, schedules.chamberId)).where(eq(schedules.doctorId, d.id)).orderBy(asc(schedules.startTime));
+      const sch = await db.select().from(schedules).innerJoin(chambers, eq(chambers.id, schedules.chamberId)).where(and(eq(schedules.doctorId, d.id), isNull(schedules.removedAt))).orderBy(asc(schedules.startTime));
       return { ...d, schedules: sch.map((x) => ({ ...x.schedules, chamber: { id: x.chambers.id, name: x.chambers.name } })) };
     });
 
@@ -356,10 +389,19 @@ export async function adminRoutes(app: FastifyInstance) {
     });
 
     r.post('/admin/chambers', async (req) => {
-      const b = chamberBody.parse(req.body);
+      const { sittings, ...b } = chamberBody.extend({ sittings: z.array(chamberSittingBody).max(20).default([]) }).parse(req.body);
       const [row] = await db.insert(chambers).values(b).returning();
       await audit(req, 'chamber.create', row.id, b);
+      for (const x of sittings) await addChamberSitting(req, row.id, x);
       return row;
+    });
+
+    /** Add a doctor's sitting from the chamber page (an existing doctor, or a new one). */
+    r.post('/admin/chambers/:id/schedules', async (req) => {
+      const b = chamberSittingBody.parse(req.body);
+      const [c] = await db.select().from(chambers).where(and(eq(chambers.id, idParam(req)), isNull(chambers.removedAt)));
+      if (!c) throw notFound('Chamber');
+      return addChamberSitting(req, c.id, b);
     });
 
     r.patch('/admin/chambers/:id', async (req) => {
@@ -392,9 +434,13 @@ export async function adminRoutes(app: FastifyInstance) {
     });
 
     r.post('/admin/doctors', async (req) => {
-      const b = doctorBody.parse(req.body);
+      const { sittings, ...b } = doctorBody.extend({ sittings: z.array(scheduleBody).max(20).default([]) }).parse(req.body);
       const [row] = await db.insert(doctors).values(b).returning();
       await audit(req, 'doctor.create', row.id, b);
+      for (const x of sittings) {
+        const r2 = await createSchedule(row.id, x);
+        await audit(req, 'schedule.create', r2.schedule.id, x);
+      }
       return row;
     });
 
@@ -458,19 +504,36 @@ export async function adminRoutes(app: FastifyInstance) {
       const b = scheduleBody.parse(req.body);
       const [d] = await db.select().from(doctors).where(eq(doctors.id, idParam(req)));
       if (!d) throw notFound('Doctor');
-      const [row] = await db.insert(schedules).values({ ...b, doctorId: d.id }).returning();
-      const result = await applySchedule(row.id);
-      await audit(req, 'schedule.create', row.id, b);
-      return { schedule: row, result };
+      const out = await createSchedule(d.id, b);
+      await audit(req, 'schedule.create', out.schedule.id, b);
+      return out;
     });
 
     r.patch('/admin/schedules/:id', async (req) => {
       const b = scheduleBody.partial().parse(req.body);
+      const [old] = await db.select().from(schedules).where(and(eq(schedules.id, idParam(req)), isNull(schedules.removedAt)));
+      if (!old) throw notFound('Sitting');
+      // Moving to another chamber: the old sitting stops (booked patients can move free) and a new one starts.
+      if (b.chamberId && b.chamberId !== old.chamberId) {
+        const gone = await removeSchedule(old.id);
+        const next = { chamberId: b.chamberId, weekdays: b.weekdays ?? old.weekdays, startTime: b.startTime ?? old.startTime, tokenLimit: b.tokenLimit ?? old.tokenLimit, onlineShare: b.onlineShare ?? old.onlineShare, active: b.active ?? old.active };
+        const out = await createSchedule(old.doctorId, next);
+        await audit(req, 'schedule.move', out.schedule.id, { from: old.chamberId, to: b.chamberId, patients: gone.patients });
+        return { ...out, moved: gone };
+      }
       const [row] = await db.update(schedules).set(b).where(eq(schedules.id, idParam(req))).returning();
       if (!row) throw notFound('Schedule');
       const result = await applySchedule(row.id);
       await audit(req, 'schedule.update', row.id, b);
       return { schedule: row, result };
+    });
+
+    r.delete('/admin/schedules/:id', async (req) => {
+      const [sc] = await db.select().from(schedules).where(and(eq(schedules.id, idParam(req)), isNull(schedules.removedAt)));
+      if (!sc) throw notFound('Sitting');
+      const result = await removeSchedule(sc.id);
+      await audit(req, 'schedule.remove', sc.id, result);
+      return result;
     });
 
     r.patch('/admin/sessions/:id', async (req) => {
@@ -556,6 +619,22 @@ export async function adminRoutes(app: FastifyInstance) {
   /* ================= owners only ================= */
   app.register(async (r) => {
     r.addHook('preHandler', requireAdmin('OWNER'));
+
+    r.delete('/admin/doctors/:id', async (req) => {
+      const [d] = await db.select().from(doctors).where(and(eq(doctors.id, idParam(req)), isNull(doctors.removedAt)));
+      if (!d) throw notFound('Doctor');
+      const result = await removeDoctor(d.id);
+      await audit(req, 'doctor.remove', d.id, { name: d.name, ...result });
+      return result;
+    });
+
+    r.delete('/admin/chambers/:id', async (req) => {
+      const [c] = await db.select().from(chambers).where(and(eq(chambers.id, idParam(req)), isNull(chambers.removedAt)));
+      if (!c) throw notFound('Chamber');
+      const result = await removeChamber(c.id);
+      await audit(req, 'chamber.remove', c.id, { name: c.name, ...result });
+      return result;
+    });
 
     r.post('/admin/settlements/:id/paid', async (req) => {
       const { reference } = z.object({ reference: z.string().trim().min(3).max(80) }).parse(req.body);

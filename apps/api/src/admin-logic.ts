@@ -1,7 +1,9 @@
-import { and, eq, gt, inArray, sql } from 'drizzle-orm';
+import { and, eq, gt, inArray, isNotNull, isNull, sql } from 'drizzle-orm';
+import { notifyUser } from './notify.js';
+import { broadcastSession } from './queue.js';
 import { db, schema } from './db.js';
 import { ensureSessions } from './sessions.js';
-import { addDays, istDate, istInstant, weekday } from './time.js';
+import { addDays, istDate, istInstant, prettyDate, weekday } from './time.js';
 import { conflict } from './errors.js';
 
 const { schedules, sessions, payments, tokens, chambers, settlements } = schema;
@@ -98,4 +100,56 @@ export async function generateSettlements(date: string) {
 /** Runs from the server timer: settles yesterday once it is over. */
 export async function autoSettle() {
   return generateSettlements(addDays(istDate(), -1));
+}
+
+/**
+ * Stop a sitting for good (admin removed it, or removed its doctor or chamber).
+ * Upcoming days nobody booked are cancelled. Days with bookings are cancelled too, and each online
+ * patient is told and can move the serial to another sitting for free (our side changed, so no fee).
+ * Today's sitting is left to the counter, so a running queue is never cut off.
+ */
+export async function removeSchedule(scheduleId: string) {
+  const [sc] = await db.update(schedules).set({ active: false, removedAt: new Date() }).where(eq(schedules.id, scheduleId)).returning();
+  if (!sc) return { cancelled: 0, patients: 0 };
+  const [doc] = await db.select().from(schema.doctors).where(eq(schema.doctors.id, sc.doctorId));
+  const [room] = await db.select().from(chambers).where(eq(chambers.id, sc.chamberId));
+  const future = await db.select().from(sessions).where(and(eq(sessions.scheduleId, scheduleId), gt(sessions.date, istDate()), inArray(sessions.status, ['OPEN', 'CLOSED'])));
+  let patients = 0;
+  for (const s of future) {
+    await db.update(sessions).set({ status: 'CANCELLED', doctorStatus: 'NOT_COMING' }).where(eq(sessions.id, s.id));
+    const waiting = await db.select().from(tokens).where(and(eq(tokens.sessionId, s.id), inArray(tokens.state, ['BOOKED', 'ARRIVED']), eq(tokens.source, 'ONLINE'), isNotNull(tokens.userId)));
+    for (const t of waiting) {
+      await db.update(tokens).set({ absentChoice: 'pending' }).where(eq(tokens.id, t.id));
+      await notifyUser(t.userId!, 'not_coming', `${doc?.name ?? 'The doctor'} will not sit at ${room?.name ?? 'this chamber'} on ${prettyDate(s.date)}`, 'Pick another sitting in the app. Moving is free.', { tokenId: t.id });
+      patients++;
+    }
+    await broadcastSession(s.id);
+  }
+  return { cancelled: future.length, patients };
+}
+
+/** Add a sitting and open its upcoming days. */
+export async function createSchedule(doctorId: string, b: { chamberId: string; weekdays: number[]; startTime: string; tokenLimit: number; onlineShare: number; active?: boolean }) {
+  const [row] = await db.insert(schedules).values({ ...b, doctorId }).returning();
+  const result = await applySchedule(row.id);
+  return { schedule: row, result };
+}
+
+/** Remove a doctor: every sitting stops (patients told, free move), and they leave the app and admin lists. */
+export async function removeDoctor(doctorId: string) {
+  const list = await db.select().from(schedules).where(and(eq(schedules.doctorId, doctorId), isNull(schedules.removedAt)));
+  let cancelled = 0, patients = 0;
+  for (const sc of list) { const r = await removeSchedule(sc.id); cancelled += r.cancelled; patients += r.patients; }
+  await db.update(schema.doctors).set({ visible: false, removedAt: new Date() }).where(eq(schema.doctors.id, doctorId));
+  return { sittings: list.length, cancelled, patients };
+}
+
+/** Remove a chamber: every sitting there stops, its counter logins are switched off, and it leaves the app. */
+export async function removeChamber(chamberId: string) {
+  const list = await db.select().from(schedules).where(and(eq(schedules.chamberId, chamberId), isNull(schedules.removedAt)));
+  let cancelled = 0, patients = 0;
+  for (const sc of list) { const r = await removeSchedule(sc.id); cancelled += r.cancelled; patients += r.patients; }
+  await db.update(chambers).set({ visible: false, removedAt: new Date() }).where(eq(chambers.id, chamberId));
+  await db.update(schema.agentAccounts).set({ active: false }).where(eq(schema.agentAccounts.chamberId, chamberId));
+  return { sittings: list.length, cancelled, patients };
 }

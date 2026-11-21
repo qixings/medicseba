@@ -67,6 +67,8 @@ export const doctors = pgTable('doctors', {
   ratingSum: integer('rating_sum').notNull().default(0),
   ratingCount: integer('rating_count').notNull().default(0),
   visible: boolean('visible').notNull().default(true),
+  /** Removed by admin: hidden everywhere, kept for past bookings. */
+  removedAt: timestamp('removed_at', { withTimezone: true }),
   createdAt: createdAt(),
 });
 
@@ -85,6 +87,7 @@ export const chambers = pgTable('chambers', {
   bookingFee: integer('booking_fee').notNull().default(55),
   platformFee: integer('platform_fee').notNull().default(10),
   visible: boolean('visible').notNull().default(true),
+  removedAt: timestamp('removed_at', { withTimezone: true }),
   createdAt: createdAt(),
 });
 
@@ -97,6 +100,7 @@ export const schedules = pgTable('schedules', {
   tokenLimit: integer('token_limit').notNull().default(40),
   onlineShare: integer('online_share').notNull().default(60),
   active: boolean('active').notNull().default(true),
+  removedAt: timestamp('removed_at', { withTimezone: true }),
 });
 
 export const sessions = pgTable('sessions', {

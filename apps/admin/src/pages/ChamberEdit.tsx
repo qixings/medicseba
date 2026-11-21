@@ -1,12 +1,13 @@
 import { useEffect, useRef, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
-import { api, dayName, Drawer, Field, Loading, PasswordInput, Pill, prettyTime, rupee, useAction, useAuth, useLoad } from '../lib';
+import { api, Drawer, Field, Loading, PasswordInput, Pill, rupee, useAction, useAuth, useLoad, useToast } from '../lib';
+import { SittingList, type Draft, type Sitting } from '../components/Sittings';
 
 type Agent = { id: string; username: string; active: boolean };
 type Chamber = {
   id: string; name: string; kind: 'PHARMACY' | 'OWN'; address: string; area: string; landmark: string; lat: number | null; lng: number | null;
   phone: string; openingHours: string; bookingFee: number; platformFee: number; visible: boolean; photos: string[]; agents: Agent[];
-  schedules: { id: string; weekdays: number[]; startTime: string; tokenLimit: number; active: boolean; doctor: { id: string; name: string } }[];
+  schedules: Sitting[];
 };
 
 const blank = { name: '', kind: 'PHARMACY' as 'PHARMACY' | 'OWN', address: '', area: '', landmark: '', lat: '', lng: '', phone: '', openingHours: '09:00-21:00', bookingFee: 55, platformFee: 10, visible: true };
@@ -21,6 +22,8 @@ export default function ChamberEdit() {
   const [f, setF] = useState(blank);
   const { run, busy } = useAction();
   const [login, setLogin] = useState<Agent | 'new' | null>(null);
+  const [drafts, setDrafts] = useState<Draft[]>([]);
+  const toast = useToast();
 
   useEffect(() => {
     const x = c.data;
@@ -37,9 +40,18 @@ export default function ChamberEdit() {
   async function save() {
     const body = { ...f, lat: f.lat ? Number(f.lat) : null, lng: f.lng ? Number(f.lng) : null };
     if (isNew) {
-      const r = await run(() => api<{ id: string }>('/admin/chambers', { body }), 'Chamber added. Now give it a counter login.');
-      if (r) nav(`/chambers/${r.id}`, { replace: true });
+      const sittings = drafts.map(({ doctorId, newDoctor, weekdays, startTime, tokenLimit, onlineShare }) => ({ doctorId, newDoctor, weekdays, startTime, tokenLimit, onlineShare }));
+      const r = await run(() => api<{ id: string }>('/admin/chambers', { body: { ...body, sittings } }), 'Chamber added. Now give it a counter login.');
+      if (r) { setDrafts([]); nav(`/chambers/${r.id}`, { replace: true }); }
     } else if (await run(() => api(`/admin/chambers/${id}`, { method: 'PATCH', body }), 'Saved')) void c.reload();
+  }
+
+  /** Hides the chamber everywhere, stops every sitting there (booked patients can move free) and turns off its counter logins. */
+  async function removeChamber() {
+    const n = c.data?.schedules.length ?? 0;
+    if (!window.confirm(`Remove ${c.data?.name}?\n\nIt disappears from the patient app and its counter logins stop working.${n ? ` The ${n} sitting${n > 1 ? 's' : ''} here stop: upcoming days are cancelled, and patients who booked are told and can move their serial for free.` : ''} The doctors stay in the Doctors list. Past bookings and settlements are kept.`)) return;
+    const r = await run(() => api<{ patients: number }>(`/admin/chambers/${id}`, { method: 'DELETE' }));
+    if (r) { toast(r.patients ? `Chamber removed. ${r.patients} booked patient${r.patients > 1 ? 's were' : ' was'} told.` : 'Chamber removed'); nav('/chambers', { replace: true }); }
   }
 
   if (!isNew && !c.data) return <Loading error={c.error} loading />;
@@ -50,7 +62,10 @@ export default function ChamberEdit() {
     <>
       <div className="head">
         <div><div className="small"><Link to="/chambers">Chambers</Link></div><h1>{isNew ? 'New chamber' : x!.name}</h1></div>
-        {edit ? <button className="btn primary" onClick={save} disabled={busy || !ok}>{isNew ? 'Add chamber' : 'Save changes'}</button> : null}
+        <div className="row">
+          {!isNew && can('OWNER') ? <button className="btn danger" disabled={busy} onClick={removeChamber}>Remove chamber</button> : null}
+          {edit ? <button className="btn primary" onClick={save} disabled={busy || !ok}>{isNew ? 'Add chamber' : 'Save changes'}</button> : null}
+        </div>
       </div>
       <div className="grid2" style={{ alignItems: 'start' }}>
         <div className="card">
@@ -79,8 +94,10 @@ export default function ChamberEdit() {
           </fieldset>
         </div>
 
+        <div style={{ display: 'grid', gap: 16 }}>
+          <SittingList side="chamber" ownerId={isNew ? null : id!} saved={x?.schedules ?? []} drafts={drafts} edit={edit} onChange={() => void c.reload()} onDrafts={setDrafts} />
         {!isNew ? (
-          <div style={{ display: 'grid', gap: 16 }}>
+          <>
             <Photos chamberId={id!} photos={x!.photos} edit={edit} onChange={() => void c.reload()} />
             <div className="card flush">
               <div className="row" style={{ padding: '16px 18px 4px', justifyContent: 'space-between' }}>
@@ -101,24 +118,9 @@ export default function ChamberEdit() {
                 </table>
               ) : null}
             </div>
-            <div className="card flush">
-              <div style={{ padding: '16px 18px 4px' }}><h2>Doctors here</h2></div>
-              <Loading empty={x!.schedules.length === 0 && 'No doctor sits here yet. Add one from a doctor\'s page.'} />
-              {x!.schedules.length ? (
-                <table>
-                  <tbody>{x!.schedules.map((s) => (
-                    <tr key={s.id} style={{ opacity: s.active ? 1 : 0.5 }}>
-                      <td className="strong"><Link to={`/doctors/${s.doctor.id}`}>{s.doctor.name}</Link></td>
-                      <td>{s.weekdays.map(dayName).join(', ')}</td>
-                      <td className="num">{prettyTime(s.startTime)}</td>
-                      <td className="right num">{s.tokenLimit} serials</td>
-                    </tr>
-                  ))}</tbody>
-                </table>
-              ) : null}
-            </div>
-          </div>
+          </>
         ) : null}
+        </div>
       </div>
       {login ? <LoginDrawer chamberId={id!} a={login === 'new' ? null : login} onClose={() => setLogin(null)} onSaved={() => { setLogin(null); void c.reload(); }} /> : null}
     </>

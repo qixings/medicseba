@@ -477,3 +477,64 @@ test('chamber self-service: live details, requests approved by the team; receipt
   const other = await login('9820000002', 'Someone Else');
   assert.equal((await call('GET', `/bookings/${b.body.token.id}/receipt`, undefined, other.token)).status, 404);
 });
+
+test('admin: doctors and chambers with sittings, move a sitting, remove sitting, doctor and chamber', async () => {
+  const own = (await call('POST', '/admin/login', { username: 'owner1', password: 'secret123' })).body.token as string;
+  const spec = (await call('GET', '/admin/specialties', undefined, own)).body[0];
+  const allDays = [0, 1, 2, 3, 4, 5, 6];
+
+  // A new chamber, created together with a brand-new doctor sitting there.
+  const ch = await call('POST', '/admin/chambers', {
+    name: 'Hill View Clinic', kind: 'OWN', address: 'Hospital Road, Kailashahar', area: 'Hospital Road', bookingFee: 55, platformFee: 10,
+    sittings: [{ newDoctor: { name: 'Dr. Ria Paul', degrees: 'MBBS', specialtyId: spec.id }, weekdays: allDays, startTime: '10:00', tokenLimit: 12, onlineShare: 50 }],
+  }, own);
+  assert.equal(ch.status, 200, JSON.stringify(ch.body));
+  const chDetail = (await call('GET', `/admin/chambers/${ch.body.id}`, undefined, own)).body;
+  assert.equal(chDetail.schedules.length, 1);
+  const ria = chDetail.schedules[0].doctor;
+  assert.equal(ria.name, 'Dr. Ria Paul');
+  assert.ok((await call('GET', '/admin/doctors', undefined, own)).body.some((d: { id: string }) => d.id === ria.id), 'new doctor is in the doctor list');
+
+  // A new doctor created together with a sitting at that chamber.
+  const doc = await call('POST', '/admin/doctors', {
+    name: 'Dr. Arup Das', degrees: 'MBBS, MS', specialtyId: spec.id, experienceYears: 5, consultFee: 300, languages: ['Bengali'], bookingWindowDays: 7,
+    sittings: [{ chamberId: ch.body.id, weekdays: allDays, startTime: '18:00', tokenLimit: 10, onlineShare: 60 }],
+  }, own);
+  assert.equal(doc.status, 200, JSON.stringify(doc.body));
+  let arup = (await call('GET', `/admin/doctors/${doc.body.id}`, undefined, own)).body;
+  assert.equal(arup.schedules.length, 1);
+
+  // Add an existing doctor from the chamber page.
+  const other = (await call('GET', '/admin/doctors', undefined, own)).body.find((d: { id: string; name: string }) => d.name === 'Dr. Amit Nath');
+  const add = await call('POST', `/admin/chambers/${ch.body.id}/schedules`, { doctorId: other.id, weekdays: [1, 3], startTime: '08:00', tokenLimit: 20, onlineShare: 50 }, own);
+  assert.equal(add.status, 200, JSON.stringify(add.body));
+
+  // A patient books Dr. Arup at Hill View, then the sitting moves to another chamber.
+  const p = await login('9000000071', 'Move Patient');
+  const s = (await sessionsOf('Dr. Arup Das')).find((x) => x.date > addDays(istDate(), 1))!;
+  const b = await book(p.token, s.id, p.memberId);
+  assert.equal(b.status, 200, JSON.stringify(b.body));
+  const city = (await call('GET', '/admin/chambers', undefined, own)).body.find((c: { name: string }) => c.name === 'City Medicos');
+  const mv = await call('PATCH', `/admin/schedules/${arup.schedules[0].id}`, { chamberId: city.id }, own);
+  assert.equal(mv.status, 200, JSON.stringify(mv.body));
+  assert.equal(mv.body.moved.patients, 1, 'the booked patient was told');
+  const [tk] = await db.select().from(schema.tokens).where(eq(schema.tokens.id, b.body.token.id));
+  assert.equal(tk.absentChoice, 'pending', 'and can move for free');
+  arup = (await call('GET', `/admin/doctors/${doc.body.id}`, undefined, own)).body;
+  assert.equal(arup.schedules.length, 1);
+  assert.equal(arup.schedules[0].chamber.id, city.id);
+
+  // Remove one sitting, then the doctor, then the chamber.
+  assert.equal((await call('DELETE', `/admin/schedules/${add.body.schedule.id}`, undefined, own)).status, 200);
+  assert.equal((await call('GET', `/admin/chambers/${ch.body.id}`, undefined, own)).body.schedules.length, 1);
+  const rd = await call('DELETE', `/admin/doctors/${doc.body.id}`, undefined, own);
+  assert.equal(rd.status, 200, JSON.stringify(rd.body));
+  assert.ok(!(await call('GET', '/admin/doctors', undefined, own)).body.some((d: { id: string }) => d.id === doc.body.id));
+  assert.equal((await call('GET', `/doctors/${doc.body.id}`)).status, 404, 'gone from the patient app');
+  const rc = await call('DELETE', `/admin/chambers/${ch.body.id}`, undefined, own);
+  assert.equal(rc.status, 200, JSON.stringify(rc.body));
+  assert.ok(!(await call('GET', '/admin/chambers', undefined, own)).body.some((c: { id: string }) => c.id === ch.body.id));
+  // Managers cannot remove a doctor; only the owner can.
+  const sup = (await call('POST', '/admin/login', { username: 'support1', password: 'secret123' })).body.token as string;
+  assert.equal((await call('DELETE', `/admin/doctors/${ria.id}`, undefined, sup)).status, 403);
+});
