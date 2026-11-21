@@ -5,6 +5,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { act, dismissNewBookings, refreshBoard, useCounter, type DoctorStatus, type TokenRow } from '@/lib/counter';
 import { ask } from '@/lib/ask';
 import { openReceipt } from '@/lib/receipt';
+import { Inbox } from '@/components/Inbox';
 import { SittingSwitch } from '@/components/SittingSwitch';
 import { WalkInSheet } from '@/components/WalkInSheet';
 import { useLiveBoard } from '@/lib/live';
@@ -157,6 +158,7 @@ export default function Board() {
     <View style={{ flex: 1 }}>
       <TopBar title={`${s.doctor.name}, ${s.time}`} right={<SittingSwitch s={s} />} />
       <ScrollView style={{ flex: 1 }} contentContainerStyle={{ paddingTop: ins.top + 70, paddingHorizontal: 16, paddingBottom: ins.bottom + 110, width: '100%', maxWidth: 1180, alignSelf: 'center' }}>
+        <Inbox />
         <SyncBar />
         {wide ? (
           <View style={{ flexDirection: 'row', gap: 16, alignItems: 'flex-start' }}>

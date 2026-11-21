@@ -142,6 +142,7 @@ const en = {
   language: 'Language',
   account: 'Account',
   serving: 'Serving',
+  markAllRead: 'Mark all read',
   markRead: 'Got it',
 };
 
@@ -286,6 +287,7 @@ const bn: Dict = {
   language: 'ভাষা',
   account: 'অ্যাকাউন্ট',
   serving: 'চলছে',
+  markAllRead: 'সব পড়া হয়েছে',
   markRead: 'বুঝেছি',
 };
 

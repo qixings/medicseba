@@ -1,4 +1,3 @@
-import { useEffect } from 'react';
 import { RefreshControl, View } from 'react-native';
 import { loadInbox, markInboxRead, useInbox } from '@/lib/inbox';
 import { useT } from '@/lib/i18n';
@@ -10,10 +9,14 @@ const when = (iso: string) => new Date(iso).toLocaleString('en-IN', { day: 'nume
 export default function Inbox() {
   const t = useT();
   const list = useInbox((s) => s.list);
-  useEffect(() => { if (list.some((m) => !m.readAt)) void markInboxRead(); }, [list]);
+  // Opening this tab does not mark anything read: staff tap Got it on each message they have seen.
+  const unread = list.filter((m) => !m.readAt).length;
   return (
     <Page tabs refresh={<RefreshControl refreshing={false} onRefresh={() => { void loadInbox(); }} tintColor={C.deep} />} style={{ width: '100%', maxWidth: 760, alignSelf: 'center' }}>
-      <H1 style={{ marginTop: 24 }}>{t('tabMessages')}</H1>
+      <View style={{ marginTop: 24, flexDirection: 'row', alignItems: 'flex-end', justifyContent: 'space-between', gap: 10 }}>
+        <H1>{t('tabMessages')}</H1>
+        {unread > 1 ? <T w="bold" size={14} color={C.link} onPress={() => void markInboxRead()} style={{ paddingBottom: 6 }}>{t('markAllRead')}</T> : null}
+      </View>
       <Status empty={list.length === 0 ? t('noMessages') : undefined} />
       <View style={{ marginTop: 14, gap: 10 }}>
         {list.map((m) => (
@@ -23,6 +26,7 @@ export default function Inbox() {
               <T size={12} color={C.faint}>{when(m.createdAt)}</T>
             </View>
             <T size={15} color={C.sec}>{m.body}</T>
+            {!m.readAt ? <T w="bold" size={14} color={C.link} onPress={() => void markInboxRead(m.id)} style={{ marginTop: 6 }}>{t('markRead')}</T> : null}
           </Card>
         ))}
       </View>

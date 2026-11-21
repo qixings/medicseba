@@ -108,7 +108,10 @@ export async function agentRoutes(app: FastifyInstance) {
       db.select().from(agentMessages).where(eq(agentMessages.chamberId, req.agent!.chamberId)).orderBy(desc(agentMessages.createdAt)).limit(30));
 
     r.post('/agent/messages/read', async (req) => {
-      await db.update(agentMessages).set({ readAt: new Date() }).where(and(eq(agentMessages.chamberId, req.agent!.chamberId), isNull(agentMessages.readAt)));
+      // One message ("Got it" on the banner or in the list), or all of them.
+      const { id } = z.object({ id: z.string().optional() }).parse(req.body ?? {});
+      await db.update(agentMessages).set({ readAt: new Date() })
+        .where(and(eq(agentMessages.chamberId, req.agent!.chamberId), isNull(agentMessages.readAt), ...(id ? [eq(agentMessages.id, id)] : [])));
       return { ok: true };
     });
 

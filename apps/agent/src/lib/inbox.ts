@@ -19,15 +19,17 @@ export async function loadInbox() {
   }
 }
 
-export async function markInboxRead() {
-  useInbox.setState({ list: useInbox.getState().list.map((m) => ({ ...m, readAt: m.readAt ?? new Date().toISOString() })) });
-  await post('/agent/messages/read').catch(() => {});
+/** Mark one message read, or all of them when no id is given. */
+export async function markInboxRead(id?: string) {
+  const now = new Date().toISOString();
+  useInbox.setState({ list: useInbox.getState().list.map((m) => (!id || m.id === id ? { ...m, readAt: m.readAt ?? now } : m)) });
+  await post('/agent/messages/read', id ? { id } : {}).catch(() => {});
 }
 
 let timer: ReturnType<typeof setInterval> | null = null;
 export function startInbox() {
-  void loadInbox();
   if (timer) return;
+  void loadInbox();
   timer = setInterval(() => { void loadInbox(); }, 5 * 60_000);
   onServerChange(['messages'], () => { void loadInbox(); });
 }
