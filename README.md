@@ -53,7 +53,7 @@ They cover login, catalogue, booking and payment, live queue, agent actions, rac
 ```bash
 git clone https://github.com/qixings/medicseba /opt/medicseba
 cd /opt/medicseba
-sudo bash deploy/setup.sh medicseba.770-raja.online
+sudo bash deploy/setup.sh medicseba.hookmantra.com
 ```
 
 It installs Node 22 through nvm (system Node is untouched), creates its own `medicseba` database and user, builds both apps, starts the `medicseba-api` PM2 process on port 4100 (localhost only) and adds its own Nginx file. `DEMO_MODE=1` shows the login code on screen and uses test payments. Later updates: `bash deploy/update.sh` (shows the changes and asks before restarting).

@@ -3,10 +3,10 @@
 # Everything lives in /opt/medicseba, its own database, its own PM2 process and its own Nginx file.
 # Other projects, the system Node 18 and the existing Nginx config are not touched.
 #
-#   sudo bash deploy/setup.sh medicseba.770-raja.online
+#   sudo bash deploy/setup.sh medicseba.hookmantra.com
 set -euo pipefail
 
-DOMAIN="${1:-medicseba.770-raja.online}"
+DOMAIN="${1:-medicseba.hookmantra.com}"
 APP_DIR=/opt/medicseba
 PORT=4100
 DB=medicseba
@@ -76,6 +76,7 @@ sleep 2
 curl -fsS "http://127.0.0.1:$PORT/health" && echo
 
 say "Nginx site for $DOMAIN (its own file)"
+[ -f /etc/ssl/certs/ssl-cert-snakeoil.pem ] || { apt-get install -y ssl-cert >/dev/null && make-ssl-cert generate-default-snakeoil; }
 sed "s/__DOMAIN__/$DOMAIN/g; s/__PORT__/$PORT/g" deploy/nginx.conf > /etc/nginx/sites-available/medicseba
 ln -sf /etc/nginx/sites-available/medicseba /etc/nginx/sites-enabled/medicseba
 nginx -t
