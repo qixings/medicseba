@@ -1,11 +1,12 @@
 import { useState } from 'react';
-import { Pressable, RefreshControl, ScrollView, TextInput, View } from 'react-native';
+import { Pressable, RefreshControl, ScrollView, View } from 'react-native';
 import { router } from 'expo-router';
-import { useApi } from '@/lib/query';
+import { useApi, useDebounced } from '@/lib/query';
+import { SearchBox } from '@/components/SearchBox';
 import { useWatchSession } from '@/lib/live';
 import { useT } from '@/lib/i18n';
-import { C, F, card } from '@/lib/theme';
-import type { Home as HomeData, Note } from '@/lib/types';
+import { C, card } from '@/lib/theme';
+import type { Chamber, DoctorWithSessions, Home as HomeData, Note } from '@/lib/types';
 import { Icon, isIcon } from '@/components/Icon';
 import { ChamberCard, DoctorRow, TokenCard } from '@/components/cards';
 import { Logo } from '@/components/Logo';
@@ -31,19 +32,9 @@ export default function Home() {
       <H1 style={{ marginTop: 4 }}>{t('bookDoctor')}</H1>
       {d ? <T w="light" size={17} color={C.sec} style={{ marginTop: 4 }}><T numeric w="heavy" size={17}>{d.sittingToday}</T> {t('sittingToday')}</T> : null}
 
-      <View style={[card, { marginTop: 14, height: 46, borderRadius: 14, flexDirection: 'row', alignItems: 'center', gap: 10, paddingHorizontal: 16 }]}>
-        <Icon name="search" size={18} color={C.faint} width={2.2} />
-        <TextInput
-          accessibilityLabel={t('search')}
-          placeholder={t('search')}
-          placeholderTextColor={C.placeholder}
-          value={search}
-          onChangeText={setSearch}
-          returnKeyType="search"
-          onSubmitEditing={() => search.trim() && router.push({ pathname: '/doctors', params: { q: search.trim() } })}
-          style={[F.regular, { flex: 1, fontSize: 17, color: C.ink, height: 44 }]}
-        />
-      </View>
+      <SearchBox value={search} onChange={setSearch} onSubmit={() => search.trim() && router.push({ pathname: '/doctors', params: { q: search.trim() } })} />
+
+      {search.trim() ? <SearchResults q={search} /> : (<>
 
       <Status loading={q.isLoading} error={q.error} onRetry={() => q.refetch()} />
 
@@ -90,6 +81,38 @@ export default function Home() {
           ) : null}
         </>
       ) : null}
+      </>)}
     </Page>
+  );
+}
+
+/** Results under the home search box while typing: a few doctors and chambers, and a link to all doctors. */
+function SearchResults({ q }: { q: string }) {
+  const t = useT();
+  const dq = useDebounced(q.trim());
+  const docs = useApi<{ doctors: DoctorWithSessions[] }>(dq ? `/doctors?q=${encodeURIComponent(dq)}` : null, { keep: true });
+  const rooms = useApi<Chamber[]>(dq ? `/chambers?q=${encodeURIComponent(dq)}` : null, { keep: true });
+  const d = docs.data?.doctors ?? [];
+  const c = rooms.data ?? [];
+  const loading = (docs.isLoading || rooms.isLoading) && !docs.data && !rooms.data;
+  if (loading) return <Status loading />;
+  if (docs.data && rooms.data && !d.length && !c.length) return <T size={15} color={C.sec} style={{ marginTop: 18, lineHeight: 22 }}>{t('noResults')}</T>;
+  return (
+    <View style={{ opacity: docs.isPlaceholderData || rooms.isPlaceholderData ? 0.6 : 1 }}>
+      {d.length ? (
+        <>
+          <SectionHead title={t('doctors')} action={d.length > 5 ? t('allDoctorsFor') : undefined} onAction={() => router.push({ pathname: '/doctors', params: { q: dq } })} />
+          <Card style={{ marginTop: 10, overflow: 'hidden' }}>
+            {d.slice(0, 5).map((x, i, arr) => <DoctorRow key={x.id} d={x} session={x.sessions.find((s) => s.bookable) ?? x.sessions[0]} last={i === arr.length - 1} />)}
+          </Card>
+        </>
+      ) : null}
+      {c.length ? (
+        <>
+          <SectionHead title={t('chambers')} />
+          <View style={{ marginTop: 10, gap: 10 }}>{c.slice(0, 4).map((x) => <ChamberCard key={x.id} c={x} wide />)}</View>
+        </>
+      ) : null}
+    </View>
   );
 }

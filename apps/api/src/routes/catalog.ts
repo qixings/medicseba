@@ -8,6 +8,44 @@ import { addDays, istDate, prettyTime } from '../time.js';
 import { chamberView, doctorView } from '../views.js';
 import { liveView } from '../queue.js';
 import { readClaims } from '../auth.js';
+import { matches, searchWords } from '../search.js';
+
+const NONE = ['00000000-0000-0000-0000-000000000000'];
+
+/** Who sits where, with everything a patient might type about them. */
+async function catalogIndex() {
+  const { doctors, specialties, chambers, schedules } = schema;
+  const docs = await db.select().from(doctors).innerJoin(specialties, eq(specialties.id, doctors.specialtyId)).where(eq(doctors.visible, true));
+  const rooms = await db.select().from(chambers).where(eq(chambers.visible, true));
+  const links = await db.select({ doctorId: schedules.doctorId, chamberId: schedules.chamberId }).from(schedules).where(eq(schedules.active, true));
+  return { docs, rooms, links };
+}
+
+/** Doctors matching the search: name, degrees, specialty (or a plain word for it), languages, or the chamber they sit at. */
+async function doctorIdsFor(q: string | undefined): Promise<string[] | null> {
+  const words = searchWords(q);
+  if (!words.length) return null;
+  const { docs, rooms, links } = await catalogIndex();
+  const ids = docs.filter(({ doctors: d, specialties: sp }) => {
+    const sits = links.filter((l) => l.doctorId === d.id).map((l) => rooms.find((r) => r.id === l.chamberId)).filter(Boolean);
+    const text = [d.name, d.degrees, d.bio, d.languages.join(' '), sp.name, sp.slug, ...sits.map((r) => `${r!.name} ${r!.area} ${r!.address}`)].join(' ');
+    return matches(words, text, [sp.slug]);
+  }).map((x) => x.doctors.id);
+  return ids.length ? ids : NONE;
+}
+
+/** Chambers matching the search: name, area, address, landmark, or a doctor or specialty found there. */
+async function chamberIdsFor(q: string | undefined): Promise<string[] | null> {
+  const words = searchWords(q);
+  if (!words.length) return null;
+  const { docs, rooms, links } = await catalogIndex();
+  const ids = rooms.filter((r) => {
+    const here = links.filter((l) => l.chamberId === r.id).map((l) => docs.find((d) => d.doctors.id === l.doctorId)).filter(Boolean);
+    const text = [r.name, r.area, r.address, r.landmark, r.kind === 'PHARMACY' ? 'pharmacy medicine shop' : '', ...here.map((d) => `${d!.doctors.name} ${d!.specialties.name}`)].join(' ');
+    return matches(words, text, here.map((d) => d!.specialties.slug));
+  }).map((r) => r.id);
+  return ids.length ? ids : NONE;
+}
 
 const { specialties, doctors, chambers, sessions, schedules, tokens } = schema;
 
@@ -62,7 +100,8 @@ export async function catalogRoutes(app: FastifyInstance) {
     await ensureSessions(date, 1);
     const conds = [eq(doctors.visible, true)];
     if (q.specialty) conds.push(eq(specialties.slug, q.specialty));
-    if (q.q) conds.push(or(ilike(doctors.name, `%${q.q}%`), ilike(specialties.name, `%${q.q}%`))!);
+    const found = await doctorIdsFor(q.q);
+    if (found) conds.push(inArray(doctors.id, found));
     const docs = await db.select().from(doctors).innerJoin(specialties, eq(specialties.id, doctors.specialtyId)).where(and(...conds)).orderBy(asc(doctors.name));
     const ids = docs.map((d) => d.doctors.id);
     const sess = ids.length
@@ -111,7 +150,8 @@ export async function catalogRoutes(app: FastifyInstance) {
     const date = istDate();
     await ensureSessions(date, 1);
     const conds = [eq(chambers.visible, true)];
-    if (q.q) conds.push(or(ilike(chambers.name, `%${q.q}%`), ilike(chambers.area, `%${q.q}%`))!);
+    const found = await chamberIdsFor(q.q);
+    if (found) conds.push(inArray(chambers.id, found));
     if (q.filter === 'pharmacy') conds.push(eq(chambers.kind, 'PHARMACY'));
     if (q.filter === 'own') conds.push(eq(chambers.kind, 'OWN'));
     const rows = await db.select({ c: chambers, n: count(sessions.id) }).from(chambers)

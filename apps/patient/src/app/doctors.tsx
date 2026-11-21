@@ -1,9 +1,9 @@
 import { useState } from 'react';
-import { ScrollView, TextInput, View } from 'react-native';
+import { ScrollView, View } from 'react-native';
 import { useLocalSearchParams } from 'expo-router';
-import { useApi } from '@/lib/query';
+import { useApi, useDebounced } from '@/lib/query';
+import { SearchBox } from '@/components/SearchBox';
 import { useT } from '@/lib/i18n';
-import { C, F, card } from '@/lib/theme';
 import type { DoctorWithSessions, Specialty } from '@/lib/types';
 import { Icon } from '@/components/Icon';
 import { DoctorRow } from '@/components/cards';
@@ -15,9 +15,10 @@ export default function Doctors() {
   const [spec, setSpec] = useState(params.specialty ?? '');
   const [q, setQ] = useState(params.q ?? '');
   const [today, setToday] = useState(params.available === '1');
+  const dq = useDebounced(q);
   const specs = useApi<Specialty[]>('/specialties');
-  const qs = new URLSearchParams({ ...(spec ? { specialty: spec } : {}), ...(q.trim() ? { q: q.trim() } : {}), ...(today ? { available: '1' } : {}) }).toString();
-  const list = useApi<{ doctors: DoctorWithSessions[] }>(`/doctors${qs ? `?${qs}` : ''}`);
+  const qs = new URLSearchParams({ ...(spec ? { specialty: spec } : {}), ...(dq.trim() ? { q: dq.trim() } : {}), ...(today ? { available: '1' } : {}) }).toString();
+  const list = useApi<{ doctors: DoctorWithSessions[] }>(`/doctors${qs ? `?${qs}` : ''}`, { keep: true });
   const docs = list.data?.doctors ?? [];
 
   return (
@@ -25,11 +26,7 @@ export default function Doctors() {
       <TopBar title={t('doctors')} />
       <Page bar>
         <H1>{spec ? specs.data?.find((s) => s.slug === spec)?.name ?? t('doctors') : t('doctors')}</H1>
-        <View style={[card, { marginTop: 14, height: 46, borderRadius: 14, flexDirection: 'row', alignItems: 'center', gap: 10, paddingHorizontal: 16 }]}>
-          <Icon name="search" size={18} color={C.faint} width={2.2} />
-          <TextInput accessibilityLabel={t('search')} placeholder={t('search')} placeholderTextColor={C.placeholder} value={q} onChangeText={setQ}
-            style={[F.regular, { flex: 1, fontSize: 17, color: C.ink, height: 44 }]} />
-        </View>
+        <SearchBox value={q} onChange={setQ} />
         <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginHorizontal: -18, marginTop: 12 }} contentContainerStyle={{ paddingHorizontal: 18, gap: 8 }}>
           <Chip label={t('availableToday')} on={today} onPress={() => setToday(!today)} />
           <Chip label={t('all')} on={!spec} onPress={() => setSpec('')} />
