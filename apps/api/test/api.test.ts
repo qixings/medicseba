@@ -233,18 +233,30 @@ test('agent counter: board, walk-in retry, safe next, missed and recall, close a
   board = await call('GET', `/agent/sessions/${s.id}/board`, undefined, a);
   assert.equal(board.body.session.servingNumber, 1);
 
-  // Token 1 did not come in: missed, call 2.
+  // Serial 1 was not there: to the end of the line (behind walk-in 2), and serial 2 is called.
   const n2 = await call('POST', `/agent/sessions/${s.id}/next`, { expect: 1, current: 'MISSED' }, a);
   assert.equal(n2.body.serving.number, 2);
   board = await call('GET', `/agent/sessions/${s.id}/board`, undefined, a);
-  assert.equal(board.body.tokens[0].state, 'MISSED');
+  const one = board.body.tokens.find((x: { number: number }) => x.number === 1);
+  assert.equal(one.state, 'BOOKED');
+  assert.equal(one.missCount, 1);
+  assert.equal(board.body.tokens.at(-1).number, 1, 'serial 1 is now last in line');
+  const notes = await call('GET', '/me/notifications', undefined, u.token);
+  assert.ok(notes.body.some((x: { kind: string }) => x.kind === 'requeued'));
 
-  // Patient 1 comes back: call them now; serving number does not go backwards.
-  const back = await call('POST', `/agent/tokens/${board.body.tokens[0].id}/call`, {}, a);
+  // Next comes back to serial 1; not there again: missed.
+  const n3 = await call('POST', `/agent/sessions/${s.id}/next`, { expect: 2 }, a);
+  assert.equal(n3.body.serving.number, 1);
+  await call('POST', `/agent/sessions/${s.id}/next`, { expect: 1, current: 'MISSED' }, a);
+  board = await call('GET', `/agent/sessions/${s.id}/board`, undefined, a);
+  assert.equal(board.body.tokens.find((x: { number: number }) => x.number === 1).state, 'MISSED');
+
+  // Patient 1 turns up after all: the counter calls them in by hand.
+  const back = await call('POST', `/agent/tokens/${one.id}/call`, {}, a);
   assert.equal(back.body.state, 'SERVING');
   board = await call('GET', `/agent/sessions/${s.id}/board`, undefined, a);
-  assert.equal(board.body.session.servingNumber, 2);
-  assert.equal(board.body.tokens[1].state, 'DONE');
+  assert.equal(board.body.session.servingNumber, 1);
+  assert.equal(board.body.tokens.find((x: { number: number }) => x.number === 2).state, 'DONE');
 
   await call('POST', `/agent/sessions/${s.id}/close`, {}, a);
   const late = await login('9500000002', 'Late Comer');
@@ -385,4 +397,83 @@ test('logins renew themselves after a week', async () => {
   const r = (await call('GET', '/me', undefined, old)).body;
   assert.ok(r.token, 'an 8-day-old login gets a new one');
   assert.equal((await call('GET', '/me', undefined, r.token)).status, 200);
+});
+
+test('ending a sitting: waiting patients move free, missed lose the serial, turning it back on undoes it', async () => {
+  const s = (await sessionsOf('Dr. Riya Chakraborty')).find((x) => x.date >= addDays(istDate(), 4))!;
+  const a = agentToken;
+  const p1 = await login('9810000001', 'Never Called');
+  const p2 = await login('9810000002', 'Not There');
+  const b1 = await book(p1.token, s.id, p1.memberId);
+  const b2 = await book(p2.token, s.id, p2.memberId);
+  // p2 is called twice (first in line after a swap) and not there both times.
+  await call('POST', `/agent/tokens/${b2.body.token.id}/call`, {}, a);
+  await call('POST', `/agent/sessions/${s.id}/next`, { expect: b2.body.token.number, current: 'MISSED' }, a); // requeued, p1 called
+  await call('POST', `/agent/sessions/${s.id}/next`, { expect: b1.body.token.number, current: 'MISSED' }, a); // p1 requeued, p2 called
+  await call('POST', `/agent/sessions/${s.id}/next`, { expect: b2.body.token.number, current: 'MISSED' }, a); // p2 missed, p1 called
+  let live1 = (await call('GET', `/bookings/${b1.body.token.id}/live`, undefined, p1.token)).body;
+  assert.equal(live1.token.state, 'SERVING');
+  // p1 goes back to waiting (counter marks not there once more would miss them; instead put them back by restore path)
+  await call('POST', `/agent/tokens/${b1.body.token.id}/missed`, {}, a); // second miss for p1
+  await call('POST', `/agent/tokens/${b1.body.token.id}/restore`, {}, a); // came back: in line again
+  // End the sitting with p1 waiting and p2 missed.
+  const end = await call('POST', `/agent/sessions/${s.id}/status`, { status: 'ENDED' }, a);
+  assert.equal(end.status, 200);
+  live1 = (await call('GET', `/bookings/${b1.body.token.id}/live`, undefined, p1.token)).body;
+  assert.equal(live1.token.absentChoice, 'pending');
+  assert.equal(live1.session.status, 'ENDED');
+  const live2 = (await call('GET', `/bookings/${b2.body.token.id}/live`, undefined, p2.token)).body;
+  assert.equal(live2.token.state, 'NO_SHOW');
+  assert.ok((await call('GET', '/me/notifications', undefined, p1.token)).body.some((n: { kind: string }) => n.kind === 'ended'));
+  assert.equal((await call('POST', `/agent/sessions/${s.id}/next`, {}, a)).status, 409, 'cannot call patients after the end');
+
+  // Turned back on by mistake: p1 is in line again, p2 is missed again.
+  await call('POST', `/agent/sessions/${s.id}/resume`, {}, a);
+  live1 = (await call('GET', `/bookings/${b1.body.token.id}/live`, undefined, p1.token)).body;
+  assert.equal(live1.token.absentChoice, null);
+  assert.equal((await call('GET', `/bookings/${b2.body.token.id}/live`, undefined, p2.token)).body.token.state, 'MISSED');
+
+  // Ended again; p1 moves for free, p2 cannot.
+  await call('POST', `/agent/sessions/${s.id}/status`, { status: 'ENDED' }, a);
+  const other = (await sessionsOf('Dr. Riya Chakraborty')).find((x) => x.date > s.date)!;
+  const mv = await call('POST', `/bookings/${b1.body.token.id}/absent-choice`, { sessionId: other.id }, p1.token);
+  assert.equal(mv.status, 200, JSON.stringify(mv.body));
+  assert.equal((await call('POST', `/bookings/${b2.body.token.id}/absent-choice`, { sessionId: other.id }, p2.token)).status, 409);
+});
+
+test('chamber self-service: live details, requests approved by the team; receipts', async () => {
+  const own = (await call('POST', '/admin/login', { username: 'owner1', password: 'secret123' })).body.token as string;
+  const mine = await call('GET', '/agent/chamber', undefined, agentToken);
+  assert.equal(mine.status, 200);
+  const upd = await call('PATCH', '/agent/chamber', { phone: '+919000011111', openingHours: '08:30-21:30' }, agentToken);
+  assert.equal(upd.body.openingHours, '08:30-21:30');
+  // Fees cannot be changed directly.
+  const fee = await call('POST', '/agent/requests', { kind: 'fees', data: { bookingFee: 60 } }, agentToken);
+  assert.equal(fee.body.status, 'PENDING');
+  const spec = mine.body.specialties[0].id;
+  const nd = await call('POST', '/agent/requests', { kind: 'new_doctor', data: { doctor: { name: 'Dr. Self Listed', degrees: 'MBBS', specialtyId: spec, experienceYears: 4, consultFee: 300, languages: ['Bengali'] }, sitting: { weekdays: [1, 3, 5], startTime: '10:00', tokenLimit: 20 } } }, agentToken);
+  assert.equal(nd.status, 200, JSON.stringify(nd.body));
+  let docs = await call('GET', '/doctors?q=Self%20Listed');
+  assert.equal(docs.body.doctors.length, 0, 'not public before approval');
+  const pending = await call('GET', '/admin/requests', undefined, own);
+  assert.ok(pending.body.length >= 2);
+  assert.equal((await call('POST', `/admin/requests/${nd.body.id}/approve`, {}, own)).status, 200);
+  assert.equal((await call('POST', `/admin/requests/${fee.body.id}/reject`, { note: 'Talk to us first' }, own)).status, 200);
+  docs = await call('GET', '/doctors?q=Self%20Listed');
+  assert.equal(docs.body.doctors.length, 1, 'public after approval');
+  assert.equal((await call('GET', '/agent/chamber', undefined, agentToken)).body.chamber.bookingFee, 55);
+
+  // Receipts: the patient gets a signed link; a wrong signature is refused.
+  const u = await login('9820000001', 'Receipt Patient');
+  const s = (await sessionsOf('Dr. Riya Chakraborty')).find((x) => x.date >= addDays(istDate(), 5))!;
+  const b = await book(u.token, s.id, u.memberId);
+  const rc = await call('GET', `/bookings/${b.body.token.id}/receipt`, undefined, u.token);
+  const path = new URL(rc.body.url).pathname + new URL(rc.body.url).search;
+  const pdf = await app.inject({ method: 'GET', url: path });
+  assert.equal(pdf.statusCode, 200);
+  assert.equal(pdf.headers['content-type'], 'application/pdf');
+  assert.ok(pdf.rawPayload.subarray(0, 4).toString() === '%PDF');
+  assert.equal((await app.inject({ method: 'GET', url: path.replace(/sig=\w+/, 'sig=nope') })).statusCode, 404);
+  const other = await login('9820000002', 'Someone Else');
+  assert.equal((await call('GET', `/bookings/${b.body.token.id}/receipt`, undefined, other.token)).status, 404);
 });

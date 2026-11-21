@@ -15,6 +15,12 @@ const ACTIVE: TokenState[] = ['HELD', 'BOOKED', 'ARRIVED', 'SERVING'];
 import type { AnyColumn } from 'drizzle-orm';
 const inc = (col: AnyColumn, by = 1) => sql`${col} + ${by}`;
 
+/** Next place at the end of a sitting's line (call inside the transaction that locked the sitting). */
+async function endOfLine(tx: Tx, sessionId: string) {
+  const [{ m }] = await tx.select({ m: sql<number>`coalesce(max(${tokens.queuePos}), 0)::int` }).from(tokens).where(eq(tokens.sessionId, sessionId));
+  return m + 1;
+}
+
 /** Lock a session row for the rest of the transaction. */
 async function lockSession(tx: Tx, id: string): Promise<Session> {
   const [s] = await tx.select().from(sessions).where(eq(sessions.id, id)).for('update');
@@ -86,7 +92,7 @@ export async function confirmPayment(orderId: string, paymentId: string, signatu
     }
     await tx.update(sessions).set({ nextNumber: inc(sessions.nextNumber) }).where(eq(sessions.id, s.id));
     await tx.update(payments).set({ status: 'PAID', providerPaymentId: paymentId }).where(eq(payments.id, pay.id));
-    const [token] = await tx.update(tokens).set({ state: 'BOOKED', number: s.nextNumber, holdExpiresAt: null }).where(eq(tokens.id, t.id)).returning();
+    const [token] = await tx.update(tokens).set({ state: 'BOOKED', number: s.nextNumber, queuePos: await endOfLine(tx, s.id), holdExpiresAt: null }).where(eq(tokens.id, t.id)).returning();
     return { token, lateFail: false };
   });
 
@@ -139,7 +145,7 @@ async function moveToken(tokenId: string, targetSessionId: string, opts: { count
     if (from.status !== 'CANCELLED') await tx.update(sessions).set({ onlineTaken: inc(sessions.onlineTaken, -1) }).where(eq(sessions.id, from.id));
     await tx.update(sessions).set({ onlineTaken: inc(sessions.onlineTaken), nextNumber: inc(sessions.nextNumber) }).where(eq(sessions.id, to.id));
     const [created] = await tx.insert(tokens).values({
-      sessionId: to.id, number: to.nextNumber, source: 'ONLINE', state: 'BOOKED', userId: t.userId, memberId: t.memberId,
+      sessionId: to.id, number: to.nextNumber, queuePos: await endOfLine(tx, to.id), source: 'ONLINE', state: 'BOOKED', userId: t.userId, memberId: t.memberId,
       patientName: t.patientName, patientAge: t.patientAge, patientGender: t.patientGender,
       rescheduleUsed: opts.countAsReschedule || t.rescheduleUsed, movedFromId: t.id,
     }).returning();
@@ -191,8 +197,8 @@ export async function refundToken(tokenId: string) {
  */
 export async function absentChoice(userId: string, tokenId: string, targetSessionId: string) {
   const t = await ownedToken(userId, tokenId);
-  if (t.session.doctorStatus !== 'NOT_COMING' || t.state !== 'BOOKED') throw conflict('no_choice', 'There is nothing to choose for this booking');
-  const moved = await moveToken(t.id, targetSessionId, { countAsReschedule: false });
+  if (t.absentChoice !== 'pending' || !['BOOKED', 'ARRIVED'].includes(t.state)) throw conflict('no_choice', 'There is nothing to choose for this booking');
+  const moved = await moveToken(t.id, targetSessionId, { countAsReschedule: false, states: ['BOOKED', 'ARRIVED'] });
   await notifyUser(userId, 'moved', `Moved, serial ${moved.number}`, 'Your booking was moved to the sitting you picked', { tokenId: moved.id });
   return moved;
 }
@@ -218,7 +224,7 @@ async function agentSession(chamberId: string, sessionId: string) {
   return s;
 }
 
-export async function addWalkIn(chamberId: string, sessionId: string, p: { name: string; age?: number; gender?: 'MALE' | 'FEMALE' | 'OTHER'; phone?: string; clientRef?: string }) {
+export async function addWalkIn(chamberId: string, sessionId: string, p: { name: string; age?: number; gender?: 'MALE' | 'FEMALE' | 'OTHER'; phone?: string; clientRef?: string; paidAmount?: number; paidMethod?: 'CASH' | 'UPI' }) {
   await agentSession(chamberId, sessionId);
   if (p.clientRef) {
     // Already added (the app retried after going offline): return the same token.
@@ -231,7 +237,8 @@ export async function addWalkIn(chamberId: string, sessionId: string, p: { name:
     if (s.onlineTaken + s.counterTaken >= s.tokenLimit) throw conflict('session_full', 'No serials left in this sitting');
     await tx.update(sessions).set({ counterTaken: inc(sessions.counterTaken), nextNumber: inc(sessions.nextNumber) }).where(eq(sessions.id, s.id));
     const [row] = await tx.insert(tokens).values({
-      sessionId, number: s.nextNumber, source: 'WALKIN', state: 'ARRIVED', patientName: p.name,
+      sessionId, number: s.nextNumber, queuePos: await endOfLine(tx, sessionId), source: 'WALKIN', state: 'ARRIVED', patientName: p.name,
+      paidAmount: p.paidAmount, paidMethod: p.paidMethod,
       patientAge: p.age, patientGender: p.gender, phone: p.phone, clientRef: p.clientRef,
     }).returning();
     return row;
@@ -241,76 +248,115 @@ export async function addWalkIn(chamberId: string, sessionId: string, p: { name:
 }
 
 /**
- * Finish the current patient (done, or missed if they did not come in) and call the next one in token order.
- * `expect` is the serving number the agent saw. If the queue has already moved past it (a retry after being
+ * Finish the current patient and call the next one in line.
+ * current = 'DONE': seen by the doctor. current = 'MISSED': called but not there (see markNotThere).
+ * `expect` is the serial the counter saw being served. If the queue has already moved (a retry after being
  * offline, or two phones at one counter), nothing happens, so a patient is never skipped by accident.
  */
 export async function callNext(chamberId: string, sessionId: string, opts: { expect?: number; current?: 'DONE' | 'MISSED' } = {}) {
   await agentSession(chamberId, sessionId);
+  const notes: Note[] = [];
   const next = await db.transaction(async (tx) => {
     const s = await lockSession(tx, sessionId);
+    if (s.status === 'ENDED' || s.status === 'CANCELLED') throw conflict('session_over', 'This sitting has ended. Turn it back on to call patients.');
     if (opts.expect !== undefined && s.servingNumber !== opts.expect) return null;
-    const finish = opts.current === 'MISSED' ? { state: 'MISSED' as const } : { state: 'DONE' as const, doneAt: new Date() };
-    await tx.update(tokens).set(finish).where(and(eq(tokens.sessionId, sessionId), eq(tokens.state, 'SERVING')));
+    const [cur] = await tx.select().from(tokens).where(and(eq(tokens.sessionId, sessionId), eq(tokens.state, 'SERVING')));
+    if (cur) {
+      if (opts.current === 'MISSED') notes.push(await markNotThere(tx, cur));
+      else await tx.update(tokens).set({ state: 'DONE', doneAt: new Date() }).where(eq(tokens.id, cur.id));
+    }
+    // Always the first in line: a patient called out of order never makes the counter skip anyone.
     const [n] = await tx.select().from(tokens)
-      .where(and(eq(tokens.sessionId, sessionId), inArray(tokens.state, ['BOOKED', 'ARRIVED']), isNotNull(tokens.number), gt(tokens.number, s.servingNumber)))
-      .orderBy(asc(tokens.number)).limit(1);
-    if (!n) return null;
+      .where(and(eq(tokens.sessionId, sessionId), inArray(tokens.state, ['BOOKED', 'ARRIVED']), isNotNull(tokens.number)))
+      .orderBy(asc(tokens.queuePos)).limit(1);
+    if (!n) { await tx.update(sessions).set({ servingNumber: 0 }).where(eq(sessions.id, s.id)); return null; }
     await tx.update(tokens).set({ state: 'SERVING', servedAt: new Date() }).where(eq(tokens.id, n.id));
     const ds: DoctorStatus = s.doctorStatus === 'ON_TIME' || s.doctorStatus === 'LATE' ? 'ARRIVED' : s.doctorStatus;
     await tx.update(sessions).set({ servingNumber: n.number!, doctorStatus: ds, arrivedAt: s.arrivedAt ?? new Date() }).where(eq(sessions.id, s.id));
     return n;
   });
+  await sendNotes(notes);
   await broadcastSession(sessionId);
   await checkAheadAlerts(sessionId);
   return next;
 }
 
+type Note = { userId: string | null; kind: 'requeued' | 'missed'; tokenId: string; number: number | null; chamber?: string } | null;
+
+/**
+ * Called but not there. First time: back to the end of the line. Second time: missed
+ * (the counter can still call them in by hand if they turn up).
+ */
+async function markNotThere(tx: Tx, t: typeof tokens.$inferSelect): Promise<Note> {
+  if (t.missCount === 0) {
+    await tx.update(tokens).set({ state: 'BOOKED', missCount: 1, queuePos: await endOfLine(tx, t.sessionId) }).where(eq(tokens.id, t.id));
+    return { userId: t.userId, kind: 'requeued', tokenId: t.id, number: t.number };
+  }
+  await tx.update(tokens).set({ state: 'MISSED', missCount: t.missCount + 1 }).where(eq(tokens.id, t.id));
+  return { userId: t.userId, kind: 'missed', tokenId: t.id, number: t.number };
+}
+
+async function sendNotes(notes: Note[]) {
+  for (const n of notes) {
+    if (!n?.userId) continue;
+    if (n.kind === 'requeued') await notifyUser(n.userId, 'requeued', `You were not there for serial ${n.number}`, 'You are now at the end of the line. Reach the chamber and tell the counter.', { tokenId: n.tokenId });
+    else await notifyUser(n.userId, 'missed', `Serial ${n.number} missed`, 'You were called twice and were not there. Ask the counter if the doctor can still see you.', { tokenId: n.tokenId });
+  }
+}
+
 export type TokenAction = 'arrived' | 'missed' | 'done' | 'call' | 'restore';
 
 /**
- * Counter actions on one token. All of them are safe to repeat.
+ * Counter actions on one serial. All of them are safe to repeat.
  * - arrived: patient is at the chamber
- * - missed: called but not there; they can be called again later
+ * - missed: not there (first time to the end of the line, second time missed)
  * - call: call this patient now (a missed patient who came back, or out of order)
  * - done: finished with the doctor
- * - restore: undo a missed mark, back into the waiting line
+ * - restore: a missed patient came back; they go to the end of the line
  */
 export async function tokenAction(chamberId: string, tokenId: string, action: TokenAction) {
   const [t] = await db.select().from(tokens).where(eq(tokens.id, tokenId));
   if (!t || t.number === null) throw notFound('Serial');
   await agentSession(chamberId, t.sessionId);
+  const notes: Note[] = [];
   await db.transaction(async (tx) => {
     const s = await lockSession(tx, t.sessionId);
     const [cur] = await tx.select().from(tokens).where(eq(tokens.id, tokenId));
     const st = cur.state;
     if (action === 'arrived' && st === 'BOOKED') await tx.update(tokens).set({ state: 'ARRIVED' }).where(eq(tokens.id, tokenId));
-    if (action === 'missed' && ['BOOKED', 'ARRIVED', 'SERVING'].includes(st)) await tx.update(tokens).set({ state: 'MISSED' }).where(eq(tokens.id, tokenId));
-    if (action === 'restore' && st === 'MISSED') await tx.update(tokens).set({ state: 'ARRIVED' }).where(eq(tokens.id, tokenId));
-    if (action === 'done' && st === 'SERVING') await tx.update(tokens).set({ state: 'DONE', doneAt: new Date() }).where(eq(tokens.id, tokenId));
+    if (action === 'missed' && ['BOOKED', 'ARRIVED', 'SERVING'].includes(st)) {
+      notes.push(await markNotThere(tx, cur));
+      if (st === 'SERVING') await tx.update(sessions).set({ servingNumber: 0 }).where(eq(sessions.id, s.id));
+    }
+    if (action === 'restore' && st === 'MISSED') await tx.update(tokens).set({ state: 'ARRIVED', queuePos: await endOfLine(tx, t.sessionId) }).where(eq(tokens.id, tokenId));
+    if (action === 'done' && st === 'SERVING') {
+      await tx.update(tokens).set({ state: 'DONE', doneAt: new Date() }).where(eq(tokens.id, tokenId));
+      await tx.update(sessions).set({ servingNumber: 0 }).where(eq(sessions.id, s.id));
+    }
     if (action === 'call' && ['BOOKED', 'ARRIVED', 'MISSED'].includes(st)) {
+      if (s.status === 'ENDED' || s.status === 'CANCELLED') throw conflict('session_over', 'This sitting has ended. Turn it back on to call patients.');
       await tx.update(tokens).set({ state: 'DONE', doneAt: new Date() }).where(and(eq(tokens.sessionId, t.sessionId), eq(tokens.state, 'SERVING')));
       await tx.update(tokens).set({ state: 'SERVING', servedAt: new Date() }).where(eq(tokens.id, tokenId));
-      // The serving number never goes backwards, so "patients ahead" stays right for everyone else.
       const ds: DoctorStatus = s.doctorStatus === 'ON_TIME' || s.doctorStatus === 'LATE' ? 'ARRIVED' : s.doctorStatus;
-      await tx.update(sessions).set({ servingNumber: Math.max(s.servingNumber, t.number!), doctorStatus: ds, arrivedAt: s.arrivedAt ?? new Date() }).where(eq(sessions.id, s.id));
+      await tx.update(sessions).set({ servingNumber: t.number!, doctorStatus: ds, arrivedAt: s.arrivedAt ?? new Date() }).where(eq(sessions.id, s.id));
     }
   });
+  await sendNotes(notes);
   await broadcastSession(t.sessionId);
-  if (action === 'call') await checkAheadAlerts(t.sessionId);
+  await checkAheadAlerts(t.sessionId);
   const [after] = await db.select().from(tokens).where(eq(tokens.id, tokenId));
   return after;
 }
 
 export async function setDoctorStatus(chamberId: string, sessionId: string, status: DoctorStatus, lateMinutes = 0) {
   const s = await agentSession(chamberId, sessionId);
+  if (status === 'ENDED') return endSitting(chamberId, sessionId);
   const patch: Partial<typeof sessions.$inferInsert> = { doctorStatus: status, lateMinutes: status === 'LATE' ? lateMinutes : 0 };
   if (status === 'ARRIVED' && !s.arrivedAt) patch.arrivedAt = new Date();
   if (status === 'NOT_COMING') patch.status = 'CANCELLED';
-  if (status === 'ENDED') patch.status = 'ENDED';
   await db.update(sessions).set(patch).where(eq(sessions.id, sessionId));
   const { doctor, chamber } = await sessionWithRefs(sessionId);
-  const waiting = await db.select().from(tokens).where(and(eq(tokens.sessionId, sessionId), eq(tokens.state, 'BOOKED'), eq(tokens.source, 'ONLINE'), isNotNull(tokens.userId)));
+  const waiting = await db.select().from(tokens).where(and(eq(tokens.sessionId, sessionId), inArray(tokens.state, ['BOOKED', 'ARRIVED']), eq(tokens.source, 'ONLINE'), isNotNull(tokens.userId)));
   for (const t of waiting) {
     if (status === 'NOT_COMING') {
       await db.update(tokens).set({ absentChoice: 'pending' }).where(eq(tokens.id, t.id));
@@ -319,8 +365,62 @@ export async function setDoctorStatus(chamberId: string, sessionId: string, stat
       await notifyUser(t.userId!, 'arrived', 'Doctor has arrived', `${chamber.name}, serial ${t.number}`, { tokenId: t.id });
     } else if (status === 'LATE') {
       await notifyUser(t.userId!, 'late', `Doctor running ${lateMinutes} min late`, `${chamber.name}, serial ${t.number}`, { tokenId: t.id });
+    } else if (status === 'BREAK') {
+      await notifyUser(t.userId!, 'late', 'Doctor is on a short break', `${chamber.name}, serial ${t.number}. Your place in line is kept.`, { tokenId: t.id });
     }
   }
+  await broadcastSession(sessionId);
+  return { ok: true };
+}
+
+/**
+ * The counter ends the sitting.
+ * - The patient with the doctor is done.
+ * - Online patients who were never called keep their serial and can move it to another day for free.
+ * - Patients who were called and not there lose the serial (terms: missed serials are not moved).
+ * - Walk-ins still waiting are marked not seen.
+ * Turning the sitting back on undoes this for anyone who has not moved yet.
+ */
+export async function endSitting(chamberId: string, sessionId: string) {
+  const s = await agentSession(chamberId, sessionId);
+  if (s.status === 'ENDED') return { ok: true };
+  const { doctor, chamber, session } = await sessionWithRefs(sessionId);
+  const list = await db.select().from(tokens).where(and(eq(tokens.sessionId, sessionId), isNotNull(tokens.number)));
+  await db.transaction(async (tx) => {
+    await lockSession(tx, sessionId);
+    await tx.update(sessions).set({ status: 'ENDED', doctorStatus: 'ENDED', lateMinutes: 0, servingNumber: 0 }).where(eq(sessions.id, sessionId));
+    await tx.update(tokens).set({ state: 'DONE', doneAt: new Date() }).where(and(eq(tokens.sessionId, sessionId), eq(tokens.state, 'SERVING')));
+    await tx.update(tokens).set({ state: 'NO_SHOW' }).where(and(eq(tokens.sessionId, sessionId), eq(tokens.state, 'MISSED')));
+    await tx.update(tokens).set({ absentChoice: 'pending' }).where(and(eq(tokens.sessionId, sessionId), inArray(tokens.state, ['BOOKED', 'ARRIVED']), eq(tokens.source, 'ONLINE')));
+    await tx.update(tokens).set({ state: 'NO_SHOW' }).where(and(eq(tokens.sessionId, sessionId), inArray(tokens.state, ['BOOKED', 'ARRIVED']), eq(tokens.source, 'WALKIN')));
+  });
+  for (const t of list) {
+    if (!t.userId) continue;
+    if (t.state === 'BOOKED' || t.state === 'ARRIVED') {
+      await notifyUser(t.userId, 'ended', `${doctor.name}'s sitting ended before your turn`, `Serial ${t.number}, ${chamber.name}, ${prettyDate(session.date)}. Move it to another day in the app, free of charge.`, { tokenId: t.id });
+    } else if (t.state === 'MISSED') {
+      await notifyUser(t.userId, 'missed', `Serial ${t.number} was missed`, 'You were called and were not there, so this serial has ended. As per our terms, missed serials cannot be moved or refunded.', { tokenId: t.id });
+    }
+  }
+  await broadcastSession(sessionId);
+  return { ok: true };
+}
+
+/** Turn an ended sitting back on (ended by mistake, or the doctor stays longer). */
+export async function reopenSitting(chamberId: string, sessionId: string) {
+  const s = await agentSession(chamberId, sessionId);
+  if (s.status !== 'ENDED') return { ok: true };
+  const waiting = await db.select().from(tokens).where(and(eq(tokens.sessionId, sessionId), inArray(tokens.state, ['BOOKED', 'ARRIVED']), eq(tokens.absentChoice, 'pending')));
+  await db.transaction(async (tx) => {
+    await lockSession(tx, sessionId);
+    await tx.update(sessions).set({ status: 'OPEN', doctorStatus: 'ARRIVED' }).where(eq(sessions.id, sessionId));
+    await tx.update(tokens).set({ absentChoice: null }).where(and(eq(tokens.sessionId, sessionId), eq(tokens.absentChoice, 'pending')));
+    // Not seen at the end: walk-ins back in line, missed patients back to missed.
+    await tx.update(tokens).set({ state: 'ARRIVED' }).where(and(eq(tokens.sessionId, sessionId), eq(tokens.state, 'NO_SHOW'), eq(tokens.missCount, 0)));
+    await tx.update(tokens).set({ state: 'MISSED' }).where(and(eq(tokens.sessionId, sessionId), eq(tokens.state, 'NO_SHOW'), gt(tokens.missCount, 0)));
+  });
+  const { chamber } = await sessionWithRefs(sessionId);
+  for (const t of waiting) if (t.userId) await notifyUser(t.userId, 'arrived', 'The sitting is running again', `Serial ${t.number}, ${chamber.name}. Your place in line is kept.`, { tokenId: t.id });
   await broadcastSession(sessionId);
   return { ok: true };
 }

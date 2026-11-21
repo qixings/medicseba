@@ -38,8 +38,8 @@ export default function Absent() {
             <View style={{ width: 52, height: 52, borderRadius: 16, backgroundColor: C.badBg, alignItems: 'center', justifyContent: 'center' }}>
               <Icon name="alert" size={26} color={C.bad} />
             </View>
-            <H1 size={28} style={{ marginTop: 12 }}>{t('absentTitle')}</H1>
-            <T w="light" size={16} color={C.sec} style={{ marginTop: 6 }}>{t('absentSub')}</T>
+            <H1 size={28} style={{ marginTop: 12 }}>{l.session.doctorStatus === 'NOT_COMING' ? t('absentTitle') : t('endedTitle')}</H1>
+            <T w="light" size={16} color={C.sec} style={{ marginTop: 6 }}>{l.session.doctorStatus === 'NOT_COMING' ? t('absentSub') : t('endedSub')}</T>
             <View style={{ marginTop: 16, flexDirection: 'row', gap: 12, padding: 14, borderRadius: 20, backgroundColor: C.tint }}>
               <Icon name="move" size={22} color={C.link} />
               <View style={{ flex: 1 }}>

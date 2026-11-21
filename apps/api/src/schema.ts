@@ -138,6 +138,13 @@ export const tokens = pgTable('tokens', {
   absentChoice: text('absent_choice'),
   servedAt: timestamp('served_at', { withTimezone: true }),
   doneAt: timestamp('done_at', { withTimezone: true }),
+  /** Place in the line. Starts equal to the serial number; a patient who was not there when called moves to the end. */
+  queuePos: integer('queue_pos'),
+  /** How many times the patient was called and not there (2nd time = missed). */
+  missCount: integer('miss_count').notNull().default(0),
+  /** Counter payment for walk-ins (rupees), and how it was paid. */
+  paidAmount: integer('paid_amount'),
+  paidMethod: text('paid_method'),
   /** Set by the agent app for walk-ins, so a walk-in sent twice (offline retry) is only added once. */
   clientRef: text('client_ref').unique(),
   createdAt: createdAt(),
@@ -270,3 +277,17 @@ export const messageLog = pgTable('message_log', {
   error: text('error'),
   createdAt: createdAt(),
 }, (t) => [index('message_log_created_idx').on(t.createdAt)]);
+
+/** Changes a chamber asks for from the counter app that need the team's approval (new doctors, doctor details, fees). */
+export const changeRequests = pgTable('change_requests', {
+  id: id(),
+  chamberId: text('chamber_id').notNull().references(() => chambers.id),
+  kind: text('kind').notNull(), // new_doctor | doctor_update | fees
+  targetId: text('target_id'),
+  data: jsonb('data').$type<Record<string, unknown>>().notNull(),
+  status: text('status').notNull().default('PENDING'), // PENDING | APPROVED | REJECTED
+  note: text('note'),
+  decidedBy: text('decided_by'),
+  decidedAt: timestamp('decided_at', { withTimezone: true }),
+  createdAt: createdAt(),
+}, (t) => [index('change_request_status_idx').on(t.status, t.createdAt)]);

@@ -25,6 +25,8 @@ export const env = {
   whatsappToken: process.env.WHATSAPP_TOKEN ?? '',
   whatsappPhoneId: process.env.WHATSAPP_PHONE_NUMBER_ID ?? '',
   whatsappApiVersion: process.env.WHATSAPP_API_VERSION ?? 'v21.0',
+  /** The public address of the apps, used in links sent to patients (receipts, live queue). */
+  publicUrl: (process.env.PUBLIC_URL ?? (process.env.CORS_ORIGIN && process.env.CORS_ORIGIN !== '*' ? process.env.CORS_ORIGIN.split(',')[0] : 'http://localhost:8081')).replace(/\/$/, ''),
   /** Where uploaded photos are kept. */
   uploadDir: process.env.UPLOAD_DIR ?? new URL('../uploads', import.meta.url).pathname,
   /** Test server: shows the OTP on screen and allows test payments, even in production. */

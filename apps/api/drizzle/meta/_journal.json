@@ -36,6 +36,20 @@
       "when": 1795261304019,
       "tag": "0004_broadcasts",
       "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1795274317347,
+      "tag": "0005_queue_pos",
+      "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1795274653405,
+      "tag": "0006_change_requests",
+      "breakpoints": true
     }
   ]
 }

@@ -5,6 +5,7 @@ export const API_URL = (process.env.EXPO_PUBLIC_API_URL ?? 'http://localhost:400
 let authToken: string | null = null;
 let onUnauthorized: (() => void) | null = null;
 export function setAuthToken(t: string | null) { authToken = t; }
+export const getAuthToken = () => authToken;
 export function setOnUnauthorized(fn: () => void) { onUnauthorized = fn; }
 
 export class ApiError extends Error {
@@ -34,6 +35,8 @@ export async function api<T>(path: string, opts: { method?: string; body?: unkno
 }
 
 export const post = <T>(path: string, body?: unknown) => api<T>(path, { method: 'POST', body: body ?? {} });
+export const patch = <T>(path: string, body: unknown) => api<T>(path, { method: 'PATCH', body });
+export const put = <T>(path: string, body: unknown) => api<T>(path, { method: 'PUT', body });
 
 /** Photos are stored as paths like /doctors/x.webp and served by the web host. */
 export const mediaUrl = (u: string | null | undefined) => {

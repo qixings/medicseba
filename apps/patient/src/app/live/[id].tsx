@@ -3,6 +3,7 @@ import { Alert, Platform, View } from 'react-native';
 import { router, useLocalSearchParams } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { post, type ApiError } from '@/lib/api';
+import * as WebBrowser from 'expo-web-browser';
 import { invalidate, useApi } from '@/lib/query';
 import { useWatchSession } from '@/lib/live';
 import { openMaps } from '@/lib/maps';
@@ -33,11 +34,13 @@ export default function Live() {
 
   if (!l) return <View style={{ flex: 1, backgroundColor: C.deep }}><Status loading={q.isLoading} error={q.error} onRetry={() => q.refetch()} /></View>;
 
-  const active = ['BOOKED', 'ARRIVED', 'SERVING'].includes(l.token.state);
-  const notComing = l.session.doctorStatus === 'NOT_COMING';
+  // "pending" means the doctor did not come or the sitting ended before this patient's turn: they can move for free.
+  const pending = l.token.absentChoice === 'pending';
+  const active = ['BOOKED', 'ARRIVED', 'SERVING'].includes(l.token.state) && !pending;
+  const notComing = l.session.doctorStatus === 'NOT_COMING' || pending;
   const turn = active && (l.token.state === 'SERVING' || (l.token.number != null && l.session.servingNumber === l.token.number));
-  const total = Math.max(l.session.totalTokens, l.token.number ?? 0, 1);
-  const progress = Math.min(1, l.session.servingNumber / (l.token.number ?? total));
+  const total = Math.max(l.session.totalTokens, 1);
+  const progress = Math.min(1, l.session.seen / total);
 
   async function cancel() {
     if (!(await confirmAsk(t('cancelAsk'), t('cancelYes'), t('keep')))) return;
@@ -95,7 +98,22 @@ export default function Live() {
           <Icon name={notComing ? 'alert' : 'clock'} size={20} color={notComing ? C.bad : C.link} />
           <T w="heavy" size={15} color={notComing ? C.bad : C.ink} style={{ flex: 1 }}>{status(l.session.doctorStatus, l.session.lateMinutes)}</T>
         </Card>
-        {notComing && active ? <Button title={t('absentTitle')} kind="danger" style={{ marginTop: 10 }} onPress={() => router.push(`/absent/${id}`)} /> : null}
+        {pending ? (
+          <Card style={{ marginTop: 10, padding: 14, gap: 10, backgroundColor: C.badBg, borderColor: C.badBg }}>
+            <T w="heavy" size={16} color={C.bad}>{l.session.doctorStatus === 'NOT_COMING' ? t('absentTitle') : t('endedTitle')}</T>
+            <Button title={t('moveFree')} icon="move" onPress={() => router.push(`/absent/${id}`)} />
+          </Card>
+        ) : null}
+        {active && l.token.missCount > 0 ? (
+          <Card style={{ marginTop: 10, padding: 14, backgroundColor: C.warnBg, borderColor: C.warnBg }}>
+            <T w="semibold" size={14} color={C.warn}>{t('requeuedNote')}</T>
+          </Card>
+        ) : null}
+        {l.token.state === 'MISSED' || l.token.state === 'NO_SHOW' ? (
+          <Card style={{ marginTop: 10, padding: 14, backgroundColor: C.badBg, borderColor: C.badBg }}>
+            <T w="semibold" size={14} color={C.bad}>{t('missedNote')}</T>
+          </Card>
+        ) : null}
 
         <Card style={{ marginTop: 10, overflow: 'hidden' }}>
           <View style={{ padding: 12, flexDirection: 'row', alignItems: 'center', gap: 12 }}>
@@ -114,6 +132,7 @@ export default function Live() {
           </View>
         </Card>
 
+        <ReceiptButtons id={id} />
         {l.token.state === 'BOOKED' && !notComing ? (
           <View style={{ marginTop: 14, gap: 10 }}>
             <Button title={t('reschedule')} icon="move" kind="secondary" disabled={l.token.rescheduleUsed} onPress={() => router.push(`/reschedule/${id}`)} />
@@ -121,8 +140,30 @@ export default function Live() {
             <Button title={t('cancel')} kind="danger" loading={busy} onPress={cancel} />
           </View>
         ) : null}
-        <T size={12} color={C.faint} style={{ textAlign: 'center', marginTop: 16 }}>{l.session.totalTokens} / {l.session.tokenLimit}</T>
+        <T numeric size={12} color={C.faint} style={{ textAlign: 'center', marginTop: 16 }}>{l.session.seen} / {l.session.totalTokens}</T>
       </Page>
+    </View>
+  );
+}
+
+/** Download the receipt PDF, or have it sent to the patient's WhatsApp (when WhatsApp is turned on). */
+function ReceiptButtons({ id }: { id: string }) {
+  const t = useT();
+  const q = useApi<{ url: string; whatsapp: boolean }>(`/bookings/${id}/receipt`);
+  const [msg, setMsg] = useState('');
+  const [busy, setBusy] = useState(false);
+  if (!q.data) return null;
+  const open = () => (Platform.OS === 'web' ? globalThis.open?.(q.data!.url, '_blank') : WebBrowser.openBrowserAsync(q.data!.url));
+  return (
+    <View style={{ marginTop: 12, gap: 8 }}>
+      <View style={{ flexDirection: 'row', gap: 10 }}>
+        <Button title={t('downloadReceipt')} icon="receipt" kind="secondary" style={{ flex: 1 }} onPress={() => { void open(); }} />
+        {q.data.whatsapp ? <Button title="WhatsApp" icon="phone" kind="secondary" loading={busy} onPress={async () => {
+          setBusy(true); setMsg('');
+          try { await post(`/bookings/${id}/receipt/whatsapp`); setMsg(t('receiptSent')); } catch (e) { setMsg((e as ApiError).message); } finally { setBusy(false); }
+        }} /> : null}
+      </View>
+      {msg ? <T size={13} color={msg === t('receiptSent') ? C.good : C.bad} style={{ textAlign: 'center' }}>{msg}</T> : null}
     </View>
   );
 }

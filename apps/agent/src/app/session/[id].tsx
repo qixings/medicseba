@@ -1,19 +1,18 @@
 import { useEffect, useMemo, useState } from 'react';
-import { Alert, KeyboardAvoidingView, Modal, Platform, Pressable, ScrollView, useWindowDimensions, View } from 'react-native';
+import { Pressable, ScrollView, useWindowDimensions, View } from 'react-native';
 import { useLocalSearchParams } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { act, newClientRef, refreshBoard, useCounter, waitForNumber, type DoctorStatus, type TokenRow } from '@/lib/counter';
+import { act, dismissNewBookings, refreshBoard, useCounter, type DoctorStatus, type TokenRow } from '@/lib/counter';
+import { ask } from '@/lib/ask';
+import { openReceipt } from '@/lib/receipt';
+import { SittingSwitch } from '@/components/SittingSwitch';
+import { WalkInSheet } from '@/components/WalkInSheet';
 import { useLiveBoard } from '@/lib/live';
 import { useT, type Key } from '@/lib/i18n';
 import { C, S } from '@/lib/theme';
 import { Icon } from '@/components/Icon';
 import { SyncBar } from '@/components/SyncBar';
-import { Avatar, Button, Card, Chip, Field, Segmented, Status, T, TopBar, tap } from '@/components/ui';
-
-function ask(msg: string, yes: string, no: string): Promise<boolean> {
-  if (Platform.OS === 'web') return Promise.resolve(globalThis.confirm?.(msg) ?? false);
-  return new Promise((res) => Alert.alert('', msg, [{ text: no, style: 'cancel', onPress: () => res(false) }, { text: yes, style: 'destructive', onPress: () => res(true) }]));
-}
+import { Button, Card, Chip, Segmented, Status, T, TopBar, tap } from '@/components/ui';
 
 type Tab = 'waiting' | 'missed' | 'done';
 
@@ -30,6 +29,7 @@ export default function Board() {
   const [loaded, setLoaded] = useState(!!board);
   useEffect(() => { void refreshBoard(id).then(() => setLoaded(true)); }, [id]);
   useLiveBoard(id);
+  useEffect(() => { dismissNewBookings(id); }, [id, board?.tokens.length]);
 
   const groups = useMemo(() => {
     const ts = board?.tokens ?? [];
@@ -52,7 +52,10 @@ export default function Board() {
 
   const s = board.session;
   const over = s.status === 'ENDED' || s.status === 'CANCELLED';
-  const nextUp = groups.waiting.find((x) => (x.number ?? 0) > s.servingNumber) ?? null;
+  const nextUp = groups.waiting[0] ?? null;
+  // 3/12: patients seen so far (including the one with the doctor) out of all serials given.
+  const seen = board.tokens.filter((x) => x.state === 'DONE').length + (groups.serving ? 1 : 0);
+  const total = board.tokens.filter((x) => ['BOOKED', 'ARRIVED', 'SERVING', 'DONE', 'MISSED', 'NO_SHOW'].includes(x.state)).length;
   const next = (current: 'DONE' | 'MISSED') => act(id, { kind: 'next', body: { expect: s.servingNumber, current } });
 
   async function setStatus(status: DoctorStatus, lateMinutes?: number) {
@@ -65,7 +68,10 @@ export default function Board() {
     <View style={{ borderRadius: 28, backgroundColor: C.night, padding: 18, gap: 14, ...S.up }}>
       <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
         <T w="bold" size={14} color="rgba(255,255,255,0.75)">{t('nowServing')}</T>
-        <T numeric w="bold" size={13} color="rgba(255,255,255,0.6)">{t('waiting')} {groups.waiting.length}</T>
+        <View style={{ flexDirection: 'row', alignItems: 'baseline', gap: 2, paddingHorizontal: 10, height: 30, borderRadius: 15, backgroundColor: 'rgba(255,255,255,0.12)', justifyContent: 'center' }}>
+          <T numeric w="black" size={16} color={C.brand}>{seen}</T>
+          <T numeric w="bold" size={14} color="rgba(255,255,255,0.7)">/{total}</T>
+        </View>
       </View>
       <View style={{ flexDirection: 'row', alignItems: 'flex-end', gap: 14 }}>
         {groups.serving?.number ?? s.servingNumber ? <T numeric w="black" size={96} color={C.white} style={{ lineHeight: 92, letterSpacing: -4 }}>{groups.serving?.number ?? s.servingNumber}</T> : null}
@@ -78,7 +84,7 @@ export default function Board() {
           ) : <T w="heavy" size={28} color="rgba(255,255,255,0.75)">{t('notStarted')}</T>}
         </View>
       </View>
-      {nextUp ? <T w="medium" size={14} color={C.brand}>{t('next')}: <T numeric w="black" size={14} color={C.brand}>{nextUp.number ?? '…'}</T> {nextUp.patientName}</T> : null}
+      {over ? <T w="medium" size={14} color="rgba(255,255,255,0.8)">{t('endedNote')}</T> : nextUp ? <T w="medium" size={14} color={C.brand}>{t('next')}: <T numeric w="black" size={14} color={C.brand}>{nextUp.number ?? '…'}</T> {nextUp.patientName}{nextUp.missCount ? ` (${t('backOfLine')})` : ''}</T> : null}
       <View style={{ flexDirection: 'row', gap: 10 }}>
         <Button title={t('next')} icon="chev" style={{ flex: 1.4, height: 60 }} disabled={over || (!nextUp && !groups.serving)} onPress={() => next('DONE')} />
         <Button title={t('missedNext')} kind="night" style={{ flex: 1, height: 60, backgroundColor: 'rgba(255,255,255,0.1)' }} disabled={over || !groups.serving} onPress={() => next('MISSED')} />
@@ -94,7 +100,12 @@ export default function Board() {
           <Chip key={st} label={t(`st_${st}` as Key)} on={s.doctorStatus === st} onPress={() => !over && setStatus(st)} />
         ))}
         <Chip label={s.doctorStatus === 'LATE' ? `${t('st_LATE')} ${s.lateMinutes} ${t('min')}` : t('st_LATE')} on={s.doctorStatus === 'LATE' || lateOpen} onPress={() => !over && setLateOpen(!lateOpen)} />
-        <Chip label={t('st_ENDED')} on={s.doctorStatus === 'ENDED'} onPress={() => !over && setStatus('ENDED')} />
+        {!over ? (
+          <Pressable accessibilityRole="button" onPress={() => { tap(); void setStatus('NOT_COMING'); }}
+            style={{ height: 36, paddingHorizontal: 14, borderRadius: 18, alignItems: 'center', justifyContent: 'center', backgroundColor: C.white, borderWidth: 1, borderColor: C.line }}>
+            <T w="bold" size={14} color={C.bad}>{t('st_NOT_COMING')}</T>
+          </Pressable>
+        ) : null}
       </View>
       {lateOpen ? (
         <View style={{ gap: 8 }}>
@@ -104,12 +115,7 @@ export default function Board() {
           </View>
         </View>
       ) : null}
-      {!over ? (
-        <Pressable onPress={() => { tap(); void setStatus('NOT_COMING'); }} style={{ flexDirection: 'row', alignItems: 'center', gap: 8, paddingTop: 4 }}>
-          <Icon name="alert" size={16} color={C.bad} />
-          <T w="bold" size={14} color={C.bad}>{t('st_NOT_COMING')}</T>
-        </Pressable>
-      ) : <T w="bold" size={14} color={s.status === 'CANCELLED' ? C.bad : C.sec}>{s.status === 'CANCELLED' ? t('cancelled') : t('ended')}</T>}
+      {over ? <T w="bold" size={14} color={s.status === 'CANCELLED' ? C.bad : C.sec}>{s.status === 'CANCELLED' ? t('cancelled') : t('ended')}</T> : null}
     </Card>
   );
 
@@ -149,7 +155,7 @@ export default function Board() {
 
   return (
     <View style={{ flex: 1 }}>
-      <TopBar title={`${s.doctor.name}, ${s.time}`} />
+      <TopBar title={`${s.doctor.name}, ${s.time}`} right={<SittingSwitch s={s} />} />
       <ScrollView style={{ flex: 1 }} contentContainerStyle={{ paddingTop: ins.top + 70, paddingHorizontal: 16, paddingBottom: ins.bottom + 110, width: '100%', maxWidth: 1180, alignSelf: 'center' }}>
         <SyncBar />
         {wide ? (
@@ -163,10 +169,10 @@ export default function Board() {
       </ScrollView>
       {!over ? (
         <View style={{ position: 'absolute', right: 16, bottom: ins.bottom + 18 }}>
-          <Button title={t('addWalkIn')} icon="plus" kind="night" style={{ height: 58, borderRadius: 29, paddingHorizontal: 22, ...S.up }} onPress={() => setWalkIn(true)} />
+          <Button title={t('walkIn')} icon="plus" style={{ height: 58, borderRadius: 29, paddingHorizontal: 22, ...S.up }} onPress={() => setWalkIn(true)} />
         </View>
       ) : null}
-      <WalkInSheet sessionId={id} open={walkIn} onClose={() => setWalkIn(false)} />
+      <WalkInSheet sessionId={id} doctor={`${s.doctor.name}, ${s.time}`} open={walkIn} onClose={() => setWalkIn(false)} />
     </View>
   );
 }
@@ -190,7 +196,7 @@ function TokenLine({ x, last, disabled, onAct }: { x: TokenRow; last: boolean; d
       <View style={{ flex: 1, minWidth: stacked ? 160 : 0 }}>
         <T w="heavy" size={16} lines={1}>{x.patientName}</T>
         <T size={13} color={C.sec} lines={1}>
-          {t(`src_${x.source}` as Key)}{x.patientAge ? `, ${x.patientAge}` : ''}{x.state === 'ARRIVED' ? `, ${t('arrived').toLowerCase()}` : ''}{x.pending ? `, ${t('pending')}` : ''}
+          {t(`src_${x.source}` as Key)}{x.patientAge ? `, ${x.patientAge}` : ''}{x.state === 'ARRIVED' ? `, ${t('arrived').toLowerCase()}` : ''}{x.missCount && x.state !== 'MISSED' ? `, ${t('backOfLine')}` : ''}{x.paidAmount ? `, ₹${x.paidAmount} ${x.paidMethod === 'UPI' ? 'UPI' : t('cash').toLowerCase()}` : ''}{x.pending ? `, ${t('pending')}` : ''}
         </T>
       </View>
       <View style={[{ flexDirection: 'row', gap: 6 }, stacked && { width: '100%', paddingLeft: 64 }]}>
@@ -198,67 +204,13 @@ function TokenLine({ x, last, disabled, onAct }: { x: TokenRow; last: boolean; d
         {x.state === 'BOOKED' || x.state === 'ARRIVED' ? small(t('markMissed'), 'missed') : null}
         {x.state === 'MISSED' ? small(t('restore'), 'restore') : null}
         {x.state === 'MISSED' || x.state === 'BOOKED' || x.state === 'ARRIVED' ? small(t('callNow'), 'call', 'teal') : null}
-        {x.state === 'DONE' ? <Avatar name={x.patientName} size={30} /> : null}
+        {!x.pending ? (
+          <Pressable accessibilityRole="button" accessibilityLabel={t('printReceipt')} onPress={() => { tap(); void openReceipt(x.id).catch(() => {}); }}
+            style={{ width: 36, height: 36, borderRadius: 12, alignItems: 'center', justifyContent: 'center', backgroundColor: C.bg }}>
+            <Icon name="receipt" size={17} color={C.sec} />
+          </Pressable>
+        ) : null}
       </View>
     </View>
-  );
-}
-
-function WalkInSheet({ sessionId, open, onClose }: { sessionId: string; open: boolean; onClose: () => void }) {
-  const t = useT();
-  const ins = useSafeAreaInsets();
-  const [name, setName] = useState('');
-  const [age, setAge] = useState('');
-  const [gender, setGender] = useState<'MALE' | 'FEMALE' | 'OTHER'>('MALE');
-  const [phone, setPhone] = useState('');
-  const [busy, setBusy] = useState(false);
-  const [result, setResult] = useState<{ number: number | null; name: string } | null>(null);
-
-  const reset = () => { setName(''); setAge(''); setPhone(''); setGender('MALE'); setResult(null); };
-  const close = () => { reset(); onClose(); };
-
-  async function give() {
-    setBusy(true);
-    const clientRef = newClientRef();
-    const body = { name: name.trim(), age: age ? Number(age) : undefined, gender, phone: phone.trim() || undefined, clientRef };
-    act(sessionId, { kind: 'walkin', body });
-    const number = await waitForNumber(sessionId, clientRef);
-    setResult({ number, name: body.name });
-    setBusy(false);
-  }
-
-  return (
-    <Modal visible={open} transparent animationType="slide" onRequestClose={close}>
-      <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={{ flex: 1, justifyContent: 'flex-end', backgroundColor: 'rgba(0,25,26,0.45)' }}>
-        <Pressable style={{ flex: 1 }} onPress={close} accessibilityLabel={t('close')} />
-        <View style={{ backgroundColor: C.white, borderTopLeftRadius: 28, borderTopRightRadius: 28, padding: 20, paddingBottom: ins.bottom + 20, gap: 14, width: '100%', maxWidth: 560, alignSelf: 'center' }}>
-          {result ? (
-            <>
-              <T w="heavy" size={20}>{t('tokenGiven')}</T>
-              <View style={{ borderRadius: 24, backgroundColor: C.night, padding: 18, alignItems: 'center' }}>
-                <T numeric w="black" size={result.number ? 96 : 40} color={C.white} style={{ lineHeight: result.number ? 96 : 48 }}>{result.number ?? '…'}</T>
-                <T w="heavy" size={18} color={C.white}>{result.name}</T>
-              </View>
-              <T size={15} color={C.sec} style={{ textAlign: 'center' }}>{result.number ? t('tellPatient') : t('pendingNumber')}</T>
-              <View style={{ flexDirection: 'row', gap: 10 }}>
-                <Button title={t('close')} kind="secondary" style={{ flex: 1 }} onPress={close} />
-                <Button title={t('addWalkIn')} style={{ flex: 1 }} onPress={reset} />
-              </View>
-            </>
-          ) : (
-            <>
-              <T w="heavy" size={20}>{t('walkInTitle')}</T>
-              <Field label={t('name')} value={name} onChangeText={setName} autoCapitalize="words" autoFocus />
-              <View style={{ flexDirection: 'row', gap: 10 }}>
-                <View style={{ width: 110 }}><Field label={t('age')} value={age} onChangeText={(v) => setAge(v.replace(/\D/g, '').slice(0, 3))} keyboardType="number-pad" /></View>
-                <View style={{ flex: 1 }}><Field label={t('phone')} value={phone} onChangeText={(v) => setPhone(v.replace(/[^\d+]/g, '').slice(0, 13))} keyboardType="phone-pad" /></View>
-              </View>
-              <Segmented value={gender} onChange={setGender} options={[{ value: 'MALE', label: t('male') }, { value: 'FEMALE', label: t('female') }, { value: 'OTHER', label: t('other') }]} />
-              <Button title={t('giveToken')} onPress={give} loading={busy} disabled={name.trim().length < 2} />
-            </>
-          )}
-        </View>
-      </KeyboardAvoidingView>
-    </Modal>
   );
 }

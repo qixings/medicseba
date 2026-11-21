@@ -10,6 +10,8 @@ import { agentRoutes } from './routes/agent.js';
 import { webhookRoutes } from './routes/webhooks.js';
 import { payRoutes } from './routes/pay.js';
 import { adminRoutes, uploadRoutes } from './routes/admin.js';
+import { receiptRoutes } from './routes/receipts.js';
+import { chamberSelfRoutes } from './routes/chamber-self.js';
 
 export async function buildApp() {
   const app = Fastify({ logger: env.nodeEnv !== 'test', trustProxy: true });
@@ -34,5 +36,7 @@ export async function buildApp() {
   await app.register(payRoutes, { prefix: '/v1' });
   await app.register(adminRoutes, { prefix: '/v1' });
   await app.register(uploadRoutes);
+  await app.register(receiptRoutes, { prefix: '/v1' });
+  await app.register(chamberSelfRoutes, { prefix: '/v1' });
   return app;
 }

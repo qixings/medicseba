@@ -33,10 +33,20 @@ export async function avgMinutes(doctorId: string): Promise<number> {
   return Math.max(2, Math.round(mins.reduce((a, b) => a + b, 0) / mins.length));
 }
 
-export async function aheadOf(sessionId: string, number: number, servingNumber: number) {
+/** Patients still waiting who come before this place in the line. */
+export async function aheadOf(sessionId: string, queuePos: number) {
   const [{ n }] = await db.select({ n: count() }).from(tokens)
-    .where(and(eq(tokens.sessionId, sessionId), inArray(tokens.state, [...WAITING]), gt(tokens.number, servingNumber), lt(tokens.number, number)));
+    .where(and(eq(tokens.sessionId, sessionId), inArray(tokens.state, [...WAITING]), isNotNull(tokens.number), lt(tokens.queuePos, queuePos)));
   return n;
+}
+
+/** Where the queue stands: how many were seen (including the one with the doctor) out of all serials given. */
+export async function queueProgress(sessionId: string) {
+  const [r] = await db.select({
+    seen: sql<number>`count(*) filter (where ${tokens.state} in ('DONE', 'SERVING'))::int`,
+    total: sql<number>`count(*) filter (where ${tokens.state} in ('BOOKED', 'ARRIVED', 'SERVING', 'DONE', 'MISSED', 'NO_SHOW'))::int`,
+  }).from(tokens).where(and(eq(tokens.sessionId, sessionId), isNotNull(tokens.number)));
+  return r;
 }
 
 /** Everything the live queue screen needs for one token. */
@@ -49,14 +59,15 @@ export async function liveView(tokenId: string) {
   if (!r) return null;
   const { tokens: t, sessions: s, doctors: d, chambers: c } = r;
   const waiting = t.number !== null && (t.state === 'BOOKED' || t.state === 'ARRIVED');
-  const ahead = waiting ? await aheadOf(s.id, t.number!, s.servingNumber) : 0;
+  const ahead = waiting ? await aheadOf(s.id, t.queuePos ?? t.number!) : 0;
+  const progress = await queueProgress(s.id);
   const per = await avgMinutes(s.doctorId);
   return {
-    token: { id: t.id, number: t.number, state: t.state, patientName: t.patientName, absentChoice: t.absentChoice, rescheduleUsed: t.rescheduleUsed },
+    token: { id: t.id, number: t.number, state: t.state, patientName: t.patientName, absentChoice: t.absentChoice, rescheduleUsed: t.rescheduleUsed, missCount: t.missCount, source: t.source },
     session: {
       id: s.id, date: s.date, time: prettyTime(s.startTime), startsAt: s.startsAt, status: s.status,
       doctorStatus: s.doctorStatus, lateMinutes: s.lateMinutes, servingNumber: s.servingNumber,
-      totalTokens: s.nextNumber - 1, tokenLimit: s.tokenLimit,
+      totalTokens: progress.total, seen: progress.seen, tokenLimit: s.tokenLimit,
     },
     doctor: { id: d.id, name: d.name, photoUrl: d.photoUrl },
     chamber: { id: c.id, name: c.name, area: c.area, address: c.address, lat: c.lat, lng: c.lng },
@@ -78,9 +89,10 @@ export async function checkAheadAlerts(sessionId: string) {
   const [r] = await db.select().from(sessions).innerJoin(chambers, eq(chambers.id, sessions.chamberId)).where(eq(sessions.id, sessionId));
   if (!r) return;
   const s = r.sessions;
+  if (s.status === 'ENDED' || s.status === 'CANCELLED') return;
   const waiting = await db.select().from(tokens)
-    .where(and(eq(tokens.sessionId, sessionId), inArray(tokens.state, [...WAITING]), isNotNull(tokens.number), gt(tokens.number, s.servingNumber)))
-    .orderBy(asc(tokens.number));
+    .where(and(eq(tokens.sessionId, sessionId), inArray(tokens.state, [...WAITING]), isNotNull(tokens.number)))
+    .orderBy(asc(tokens.queuePos));
   for (let i = 0; i < waiting.length; i++) {
     const t = waiting[i];
     if (t.source !== 'ONLINE' || !t.userId) continue;

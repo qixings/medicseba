@@ -18,6 +18,7 @@ import Activity from './pages/Activity';
 import PatientProfile from './pages/PatientProfile';
 import Messages from './pages/Messages';
 import Settings from './pages/Settings';
+import Requests from './pages/Requests';
 
 function Login() {
   const { login } = useAuth();
@@ -50,6 +51,7 @@ const NAV: { to: string; label: string; icon: string; owner?: boolean }[] = [
   { to: '/doctors', label: 'Doctors', icon: 'steth' },
   { to: '/chambers', label: 'Chambers', icon: 'store' },
   { to: '/specialties', label: 'Specialties', icon: 'tag' },
+  { to: '/requests', label: 'Requests', icon: 'inbox' },
   { to: '/patients', label: 'Patients', icon: 'users' },
   { to: '/messages', label: 'Messages', icon: 'send' },
   { to: '/money', label: 'Money', icon: 'money' },
@@ -96,6 +98,7 @@ function Shell() {
           <Route path="/patients" element={<Patients />} />
           <Route path="/patients/:id" element={<PatientProfile />} />
           <Route path="/messages" element={<Messages />} />
+          <Route path="/requests" element={<Requests />} />
           <Route path="/money" element={<Money />} />
           {can('OWNER') ? <Route path="/team" element={<Team />} /> : null}
           {can('OWNER') ? <Route path="/activity" element={<Activity />} /> : null}

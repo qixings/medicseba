@@ -41,10 +41,11 @@ export default function Doctor() {
               {[
                 [`${d.experienceYears} ${t('yrs')}`, t('experience')],
                 [d.rating ? String(d.rating) : t('newDoctor'), d.rating ? `${d.ratingCount} ${t('rating').toLowerCase()}` : t('rating')],
-                [String(d.languages.length), t('languages')],
-              ].map(([a, b]) => (
-                <Card key={b} style={{ flex: 1, padding: 12, paddingVertical: 10 }}>
-                  <T numeric w="black" size={22} style={{ letterSpacing: -0.5 }}>{a}</T>
+                [d.languages.join(', ') || '-', t('languages')],
+              ].map(([a, b], i) => (
+                <Card key={b} style={{ flex: i === 2 ? 1.3 : 1, padding: 12, paddingVertical: 10, justifyContent: 'space-between' }}>
+                  {/* Languages are words, so they get a smaller size than the numbers. */}
+                  <T numeric w="black" size={i === 2 ? 15 : 22} lines={2} style={{ letterSpacing: i === 2 ? -0.2 : -0.5 }}>{a}</T>
                   <T w="medium" size={12} color={C.sec} lines={1}>{b}</T>
                 </Card>
               ))}

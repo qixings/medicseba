@@ -20,7 +20,7 @@ export default function Root() {
           <Stack.Screen name="login" />
         </Stack.Protected>
         <Stack.Protected guard={!!token}>
-          <Stack.Screen name="index" />
+          <Stack.Screen name="(tabs)" />
           <Stack.Screen name="session/[id]" />
         </Stack.Protected>
       </Stack>

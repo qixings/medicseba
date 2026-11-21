@@ -9,7 +9,7 @@ import type { Note } from '@/lib/types';
 import { Icon, type IconName } from '@/components/Icon';
 import { Card, Page, Status, T, TopBar } from '@/components/ui';
 
-const ICON: Record<string, IconName> = { booked: 'check', arrived: 'steth', late: 'clock', not_coming: 'alert', refunded: 'refund', moved: 'move', ahead5: 'bell', ahead2: 'bell', broadcast: 'bell' };
+const ICON: Record<string, IconName> = { booked: 'check', arrived: 'steth', late: 'clock', not_coming: 'alert', refunded: 'refund', moved: 'move', ahead5: 'bell', ahead2: 'bell', broadcast: 'bell', ended: 'alert', requeued: 'clock', missed: 'alert', receipt: 'receipt' };
 
 function ago(iso: string) {
   const m = Math.round((Date.now() - new Date(iso).getTime()) / 60000);
@@ -33,7 +33,7 @@ export default function Notifications() {
         {q.data?.length ? (
           <Card style={{ overflow: 'hidden' }}>
             {q.data.map((n, i) => {
-              const bad = n.kind === 'not_coming';
+              const bad = ['not_coming', 'ended', 'missed'].includes(n.kind);
               const tokenId = typeof n.data.tokenId === 'string' ? n.data.tokenId : null;
               return (
                 <View key={n.id} style={[{ padding: 12, flexDirection: 'row', gap: 12 }, i < q.data!.length - 1 && { borderBottomWidth: 1, borderBottomColor: C.line }, !n.read && { backgroundColor: '#F2FCFC' }]}>
@@ -42,7 +42,7 @@ export default function Notifications() {
                   </View>
                   <View style={{ flex: 1 }}>
                     <View style={{ flexDirection: 'row', justifyContent: 'space-between', gap: 8 }}>
-                      <T w="heavy" size={15} style={{ flex: 1 }} onPress={tokenId ? () => router.push(bad ? `/absent/${tokenId}` : `/live/${tokenId}`) : undefined}>{n.title}</T>
+                      <T w="heavy" size={15} style={{ flex: 1 }} onPress={tokenId ? () => router.push(n.kind === 'not_coming' || n.kind === 'ended' ? `/absent/${tokenId}` : `/live/${tokenId}`) : undefined}>{n.title}</T>
                       <T size={12} color={C.faint}>{ago(n.createdAt)}</T>
                     </View>
                     <T w="light" size={14} color={C.sec}>{n.body}</T>

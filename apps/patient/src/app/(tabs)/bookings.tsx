@@ -30,7 +30,8 @@ export default function Bookings() {
 
 function BookingCard({ b }: { b: Booking }) {
   const t = useT();
-  const absent = b.doctorStatus === 'NOT_COMING' && b.state === 'BOOKED' && !b.absentChoice;
+  // Doctor not coming, or the sitting ended before their turn: the patient can move the serial for free.
+  const absent = b.absentChoice === 'pending' && (b.state === 'BOOKED' || b.state === 'ARRIVED');
   const tone = absent ? 'bad' : b.state === 'BOOKED' || b.state === 'ARRIVED' || b.state === 'SERVING' ? 'good' : b.state === 'DONE' ? 'teal' : 'plain';
   const open = () => router.push(absent ? `/absent/${b.id}` : `/live/${b.id}`);
   return (
@@ -45,7 +46,7 @@ function BookingCard({ b }: { b: Booking }) {
         <T numeric w="bold" size={13}>{shortDate(t.lang, b.date)}, {b.time}</T>
       </View>
       <View style={{ alignItems: 'flex-end', gap: 6 }}>
-        <Pill text={absent ? t('doctorNotComing') : t(`state_${b.state}` as Key)} tone={tone} />
+        <Pill text={absent ? (b.doctorStatus === 'NOT_COMING' ? t('doctorNotComing') : t('serialEnded')) : t(`state_${b.state}` as Key)} tone={tone} />
         <Avatar name={b.patientName} size={26} />
       </View>
     </Card>

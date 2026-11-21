@@ -67,10 +67,10 @@ export type TokenState =
   | 'HELD' | 'BOOKED' | 'ARRIVED' | 'SERVING' | 'DONE' | 'MISSED' | 'NO_SHOW' | 'CANCELLED' | 'REFUNDED' | 'MOVED' | 'EXPIRED';
 
 export type Live = {
-  token: { id: string; number: number | null; state: TokenState; patientName: string; absentChoice: string | null; rescheduleUsed: boolean };
+  token: { id: string; number: number | null; state: TokenState; patientName: string; absentChoice: string | null; rescheduleUsed: boolean; missCount: number; source: 'ONLINE' | 'WALKIN' };
   session: {
     id: string; date: string; time: string; startsAt: string; status: Session['status'];
-    doctorStatus: DoctorStatus; lateMinutes: number; servingNumber: number; totalTokens: number; tokenLimit: number;
+    doctorStatus: DoctorStatus; lateMinutes: number; servingNumber: number; totalTokens: number; seen: number; tokenLimit: number;
   };
   doctor: { id: string; name: string; photoUrl: string | null };
   chamber: { id: string; name: string; area: string; address: string; lat: number | null; lng: number | null };

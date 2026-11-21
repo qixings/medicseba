@@ -13,12 +13,13 @@ import { requireAdmin, signAdmin } from '../auth.js';
 import { ApiError, badRequest, conflict, notFound } from '../errors.js';
 import { env } from '../env.js';
 import { adminMove, refundToken } from '../booking.js';
+import { receiptUrl } from '../receipts.js';
 import { getNotifySettings, notifyUser, recentMessageLog, resolveAudience, runBroadcast, saveNotifySettings, sendWhatsApp, whatsappConfigured, WHATSAPP_EVENTS, type Audience, type NotifySettings } from '../notify.js';
 import { broadcastSession } from '../queue.js';
 import { applySchedule, generateSettlements, setSessionLimits, settlementPreview } from '../admin-logic.js';
 import { addDays, istDate, prettyTime } from '../time.js';
 
-const { adminUsers, auditLog, agentAccounts, chambers, doctors, specialties, schedules, sessions, tokens, payments, users, settlements, familyMembers, notifications, broadcasts } = schema;
+const { adminUsers, auditLog, agentAccounts, chambers, doctors, specialties, schedules, sessions, tokens, payments, users, settlements, familyMembers, notifications, broadcasts, changeRequests } = schema;
 
 const audienceBody = z.discriminatedUnion('kind', [
   z.object({ kind: z.literal('all_patients') }),
@@ -87,7 +88,7 @@ function sessionOut(s: typeof sessions.$inferSelect) {
 }
 
 /** Read one uploaded image, check it is really an image, shrink it for phones and save it as WebP. Returns its /uploads URL. */
-async function saveUpload(req: FastifyRequest, prefix: string, o: { trim: boolean; max: number }) {
+export async function saveUpload(req: FastifyRequest, prefix: string, o: { trim: boolean; max: number }) {
   const file = await req.file();
   if (!file) throw badRequest('no_file', 'Choose a photo');
   const buf = await file.toBuffer();
@@ -109,7 +110,7 @@ async function saveUpload(req: FastifyRequest, prefix: string, o: { trim: boolea
 }
 
 /** Delete a photo file we uploaded earlier (bundled sample photos are left alone). */
-async function removeUpload(url: string | null | undefined) {
+export async function removeUpload(url: string | null | undefined) {
   if (!url?.startsWith('/uploads/')) return;
   const name = url.slice('/uploads/'.length);
   if (!/^[a-z0-9-]+\.(png|jpe?g|webp)$/i.test(name)) return;
@@ -256,6 +257,8 @@ export async function adminRoutes(app: FastifyInstance) {
       };
     });
 
+    r.get('/admin/bookings/:id/receipt', async (req) => ({ url: receiptUrl(idParam(req)) }));
+
     r.get('/admin/patients', async (req) => {
       const { q } = z.object({ q: z.string().trim().optional() }).parse(req.query);
       const digits = q?.replace(/\D/g, '') ?? '';
@@ -285,6 +288,15 @@ export async function adminRoutes(app: FastifyInstance) {
         paid: list.reduce((n, x) => n + (x.payments?.status === 'PAID' ? x.payments.amount : 0), 0),
         notifications: notes.map((n) => ({ id: n.id, kind: n.kind, title: n.title, body: n.body, read: n.read, createdAt: n.createdAt })),
       };
+    });
+
+    /** Changes chambers asked for from the counter app. */
+    r.get('/admin/requests', async (req) => {
+      const { status } = z.object({ status: z.enum(['PENDING', 'APPROVED', 'REJECTED']).default('PENDING') }).parse(req.query);
+      const rows = await db.select().from(changeRequests).innerJoin(chambers, eq(chambers.id, changeRequests.chamberId))
+        .leftJoin(doctors, eq(doctors.id, changeRequests.targetId))
+        .where(eq(changeRequests.status, status)).orderBy(desc(changeRequests.createdAt)).limit(100);
+      return rows.map((x) => ({ ...x.change_requests, chamber: x.chambers.name, chamberFees: { bookingFee: x.chambers.bookingFee }, current: x.doctors }));
     });
 
     r.get('/admin/broadcasts', async () => {
@@ -463,6 +475,38 @@ export async function adminRoutes(app: FastifyInstance) {
       return sessionOut(row);
     });
 
+    r.post('/admin/requests/:id/approve', async (req) => {
+      const [cr] = await db.select().from(changeRequests).where(eq(changeRequests.id, idParam(req)));
+      if (!cr || cr.status !== 'PENDING') throw conflict('not_pending', 'This request was already decided');
+      const d = cr.data as Record<string, any>;
+      if (cr.kind === 'new_doctor') {
+        const [doc] = await db.insert(doctors).values({ ...d.doctor, bookingWindowDays: 7, visible: true }).returning();
+        const [sc] = await db.insert(schedules).values({ doctorId: doc.id, chamberId: cr.chamberId, weekdays: d.sitting.weekdays, startTime: d.sitting.startTime, tokenLimit: d.sitting.tokenLimit, onlineShare: 60 }).returning();
+        await applySchedule(sc.id);
+      } else if (cr.kind === 'doctor_update' && cr.targetId) {
+        if (d.doctor && Object.keys(d.doctor).length) await db.update(doctors).set(d.doctor).where(eq(doctors.id, cr.targetId));
+        if (d.sitting?.scheduleId) {
+          const { scheduleId, ...rest } = d.sitting;
+          await db.update(schedules).set(rest).where(and(eq(schedules.id, scheduleId), eq(schedules.chamberId, cr.chamberId)));
+          await applySchedule(scheduleId);
+        }
+      } else if (cr.kind === 'fees') {
+        await db.update(chambers).set({ bookingFee: d.bookingFee }).where(eq(chambers.id, cr.chamberId));
+      }
+      await db.update(changeRequests).set({ status: 'APPROVED', decidedBy: req.admin!.id, decidedAt: new Date() }).where(eq(changeRequests.id, cr.id));
+      await audit(req, 'request.approve', cr.id, { kind: cr.kind });
+      return { ok: true };
+    });
+
+    r.post('/admin/requests/:id/reject', async (req) => {
+      const { note } = z.object({ note: z.string().trim().min(2).max(300) }).parse(req.body);
+      const [row] = await db.update(changeRequests).set({ status: 'REJECTED', note, decidedBy: req.admin!.id, decidedAt: new Date() })
+        .where(and(eq(changeRequests.id, idParam(req)), eq(changeRequests.status, 'PENDING'))).returning();
+      if (!row) throw conflict('not_pending', 'This request was already decided');
+      await audit(req, 'request.reject', row.id, { kind: row.kind, note });
+      return row;
+    });
+
     /** Send a message to patients or chamber counters. It goes out in the background. */
     r.post('/admin/broadcasts', async (req) => {
       const b = z.object({
@@ -553,7 +597,8 @@ export async function adminRoutes(app: FastifyInstance) {
     });
 
     r.put('/admin/settings/notifications', async (req) => {
-      const v = z.object({ whatsapp: z.object({ enabled: z.boolean(), template: z.string().trim().regex(/^[a-z0-9_]{1,512}$/, 'Template names use small letters, numbers and _'), events: z.record(z.string(), z.boolean()) }) }).parse(req.body);
+      const name = z.string().trim().regex(/^[a-z0-9_]{1,512}$/, 'Template names use small letters, numbers and _');
+      const v = z.object({ whatsapp: z.object({ enabled: z.boolean(), template: name, receiptTemplate: name.default('medicseba_receipt'), events: z.record(z.string(), z.boolean()) }) }).parse(req.body);
       await saveNotifySettings(v as NotifySettings);
       await audit(req, 'settings.update', 'notifications', { whatsapp: v.whatsapp.enabled, template: v.whatsapp.template });
       return getNotifySettings();
@@ -596,7 +641,7 @@ export async function adminRoutes(app: FastifyInstance) {
 
     r.get('/admin/audit', async () => {
       const rows = await db.select().from(auditLog).leftJoin(adminUsers, eq(adminUsers.id, auditLog.adminId)).orderBy(desc(auditLog.createdAt)).limit(200);
-      return rows.map((x) => ({ ...x.audit_log, admin: x.admin_users?.name ?? 'Unknown' }));
+      return rows.map((x) => ({ ...x.audit_log, admin: x.admin_users?.name ?? (x.audit_log.adminId.startsWith('agent:') ? 'Chamber counter' : 'Unknown') }));
     });
   });
 

@@ -6,7 +6,7 @@ const { users, notifications, appSettings, messageLog, broadcasts, agentMessages
 
 /* ---------------- settings ---------------- */
 
-export type NoteKind = 'booked' | 'ahead5' | 'ahead2' | 'arrived' | 'late' | 'not_coming' | 'refunded' | 'moved' | 'reminder' | 'broadcast';
+export type NoteKind = 'booked' | 'ahead5' | 'ahead2' | 'arrived' | 'late' | 'not_coming' | 'ended' | 'requeued' | 'missed' | 'refunded' | 'moved' | 'reminder' | 'broadcast' | 'receipt';
 
 export const WHATSAPP_EVENTS: { kind: NoteKind; label: string }[] = [
   { kind: 'booked', label: 'Serial booked' },
@@ -15,16 +15,19 @@ export const WHATSAPP_EVENTS: { kind: NoteKind; label: string }[] = [
   { kind: 'arrived', label: 'Doctor arrived' },
   { kind: 'late', label: 'Doctor running late' },
   { kind: 'not_coming', label: 'Doctor not coming' },
+  { kind: 'requeued', label: 'Not there, moved to end of line' },
+  { kind: 'missed', label: 'Serial missed' },
+  { kind: 'ended', label: 'Sitting ended before their turn' },
   { kind: 'moved', label: 'Serial moved' },
   { kind: 'broadcast', label: 'Messages from the team' },
 ];
 
 export type NotifySettings = {
-  whatsapp: { enabled: boolean; template: string; events: Partial<Record<NoteKind, boolean>> };
+  whatsapp: { enabled: boolean; template: string; receiptTemplate: string; events: Partial<Record<NoteKind, boolean>> };
 };
 
 const DEFAULTS: NotifySettings = {
-  whatsapp: { enabled: false, template: 'medicseba_update', events: { booked: true, ahead2: true, late: true, not_coming: true, moved: true, broadcast: true } },
+  whatsapp: { enabled: false, template: 'medicseba_update', receiptTemplate: 'medicseba_receipt', events: { booked: true, ahead2: true, late: true, not_coming: true, ended: true, requeued: true, missed: true, moved: true, broadcast: true } },
 };
 
 let cache: { at: number; value: NotifySettings } | null = null;
@@ -90,6 +93,35 @@ export async function sendWhatsApp(phone: string, title: string, body: string, o
   const error = ok ? null : ((await res.json().catch(() => ({}))) as { error?: { message?: string } }).error?.message ?? `HTTP ${res.status}`;
   await db.insert(messageLog).values({ channel: 'whatsapp', to, kind: opts.kind, status: ok ? 'sent' : 'failed', error });
   if (!ok) throw new Error(error ?? 'WhatsApp failed');
+}
+
+/**
+ * Send a receipt PDF on WhatsApp with the approved receipt template: a Document header, and a body with
+ * {{1}} the patient name and {{2}} the serial details.
+ */
+export async function sendWhatsAppReceipt(phone: string, pdfUrl: string, filename: string, name: string, details: string, lang?: string) {
+  const to = phone.replace(/\D/g, '').replace(/^(\d{10})$/, '91$1');
+  if (!whatsappConfigured()) throw new Error('WhatsApp is not connected on the server');
+  const template = (await getNotifySettings()).whatsapp.receiptTemplate;
+  const send = (code: string) => fetch(`https://graph.facebook.com/${env.whatsappApiVersion}/${env.whatsappPhoneId}/messages`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', authorization: `Bearer ${env.whatsappToken}` },
+    body: JSON.stringify({
+      messaging_product: 'whatsapp', to, type: 'template',
+      template: {
+        name: template, language: { code },
+        components: [
+          { type: 'header', parameters: [{ type: 'document', document: { link: pdfUrl, filename } }] },
+          { type: 'body', parameters: [{ type: 'text', text: clean(name) }, { type: 'text', text: clean(details) }] },
+        ],
+      },
+    }),
+  });
+  let res = await send(lang === 'bn' ? 'bn' : 'en');
+  if (!res.ok && lang === 'bn') res = await send('en');
+  const error = res.ok ? null : ((await res.json().catch(() => ({}))) as { error?: { message?: string } }).error?.message ?? `HTTP ${res.status}`;
+  await db.insert(messageLog).values({ channel: 'whatsapp', to, kind: 'receipt', status: res.ok ? 'sent' : 'failed', error });
+  if (!res.ok) throw new Error(error ?? 'WhatsApp failed');
 }
 
 /* ---------------- push ---------------- */

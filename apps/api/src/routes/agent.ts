@@ -5,7 +5,7 @@ import { and, asc, desc, eq, isNotNull, isNull } from 'drizzle-orm';
 import { db, schema } from '../db.js';
 import { renewedToken, requireAgent, signAgent } from '../auth.js';
 import { ApiError, forbidden, notFound } from '../errors.js';
-import { addWalkIn, callNext, closeBooking, reopenBooking, setDoctorStatus, tokenAction } from '../booking.js';
+import { addWalkIn, callNext, closeBooking, reopenBooking, reopenSitting, setDoctorStatus, tokenAction } from '../booking.js';
 import { istDate, prettyTime } from '../time.js';
 
 const { agentAccounts, sessions, doctors, tokens, chambers, specialties, agentMessages } = schema;
@@ -24,7 +24,8 @@ function tokenOut(t: typeof tokens.$inferSelect) {
   return {
     id: t.id, number: t.number, source: t.source, state: t.state, patientName: t.patientName, patientAge: t.patientAge,
     patientGender: t.patientGender, phone: t.source === 'WALKIN' ? t.phone : t.phone ? `${t.phone.slice(0, -10)}xxxxxx${t.phone.slice(-4)}` : null,
-    clientRef: t.clientRef, servedAt: t.servedAt, doneAt: t.doneAt,
+    clientRef: t.clientRef, servedAt: t.servedAt, doneAt: t.doneAt, queuePos: t.queuePos, missCount: t.missCount,
+    paidAmount: t.paidAmount, paidMethod: t.paidMethod, createdAt: t.createdAt,
   };
 }
 
@@ -65,7 +66,7 @@ export async function agentRoutes(app: FastifyInstance) {
         .where(eq(sessions.id, id));
       if (!x) throw notFound('Sitting');
       if (x.sessions.chamberId !== req.agent!.chamberId) throw forbidden();
-      const list = await db.select().from(tokens).where(and(eq(tokens.sessionId, id), isNotNull(tokens.number))).orderBy(asc(tokens.number));
+      const list = await db.select().from(tokens).where(and(eq(tokens.sessionId, id), isNotNull(tokens.number))).orderBy(asc(tokens.queuePos));
       return { session: sessionOut(x.sessions, x.doctors, x.specialties), tokens: list.map(tokenOut), at: new Date().toISOString() };
     });
 
@@ -73,6 +74,7 @@ export async function agentRoutes(app: FastifyInstance) {
       const b = z.object({
         name: z.string().trim().min(1).max(80), age: z.number().int().min(0).max(120).optional(),
         gender: z.enum(['MALE', 'FEMALE', 'OTHER']).optional(), phone: z.string().trim().max(15).optional(), clientRef: z.string().max(64).optional(),
+        paidAmount: z.number().int().min(0).max(100000).optional(), paidMethod: z.enum(['CASH', 'UPI']).optional(),
       }).parse(req.body);
       return tokenOut(await addWalkIn(req.agent!.chamberId, (req.params as { id: string }).id, b));
     });
@@ -92,6 +94,9 @@ export async function agentRoutes(app: FastifyInstance) {
       await closeBooking(req.agent!.chamberId, (req.params as { id: string }).id);
       return { ok: true };
     });
+
+    /** Turn an ended sitting back on. */
+    r.post('/agent/sessions/:id/resume', async (req) => reopenSitting(req.agent!.chamberId, (req.params as { id: string }).id));
 
     r.post('/agent/sessions/:id/reopen', async (req) => {
       await reopenBooking(req.agent!.chamberId, (req.params as { id: string }).id);

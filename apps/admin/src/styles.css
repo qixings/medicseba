@@ -177,3 +177,7 @@ textarea.input { height: auto; min-height: 80px; padding: 10px 12px; resize: ver
 [data-theme='dark'] .overlay { background: rgba(0, 0, 0, 0.6); }
 [data-theme='dark'] .toast { background: var(--surface-2); border: 1px solid var(--line); }
 [data-theme='dark'] .login img, [data-theme='dark'] .side .logo img { filter: brightness(1.15); }
+
+.seg { display: inline-flex; background: var(--line); border-radius: 12px; padding: 3px; gap: 2px; }
+.seg button { border: 0; background: transparent; height: 34px; padding: 0 14px; border-radius: 9px; font-weight: 700; color: var(--sec); cursor: pointer; }
+.seg button.on { background: var(--surface); color: var(--ink); box-shadow: var(--shadow); }

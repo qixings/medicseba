@@ -102,6 +102,7 @@ function BookingDrawer({ id, onClose, onChanged }: { id: string; onClose: () => 
               </tbody></table>
             </div>
           ) : null}
+          <button className="btn" onClick={async () => { const r = await api<{ url: string }>(`/admin/bookings/${id}/receipt`); window.open(r.url, '_blank'); }}>Open receipt (PDF)</button>
           {['BOOKED', 'ARRIVED', 'MISSED'].includes(d.token.state) && can('MANAGER') ? <MoveCard id={id} doctorId={d.doctor.id} currentSession={d.session.id} onDone={() => { void reload(); onChanged(); }} /> : null}
           {d.payment?.status === 'PAID' && can('OWNER') ? (
             <details className="card">
