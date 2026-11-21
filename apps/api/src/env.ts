@@ -21,4 +21,12 @@ export const env = {
   rescheduleCutoffMinutes: Number(process.env.RESCHEDULE_CUTOFF_MINUTES ?? 120),
   avgMinutesPerPatient: Number(process.env.AVG_MINUTES_PER_PATIENT ?? 7),
   corsOrigin: process.env.CORS_ORIGIN ?? '*',
+  /** Test server: shows the OTP on screen and allows test payments, even in production. */
+  demoMode: process.env.DEMO_MODE === '1',
 };
+
+if (env.nodeEnv === 'production' && !env.demoMode) {
+  if (env.paymentProvider !== 'razorpay') throw new Error('Production needs PAYMENT_PROVIDER=razorpay (or DEMO_MODE=1 for a test server)');
+  if (env.smsProvider !== 'msg91') throw new Error('Production needs SMS_PROVIDER=msg91 (or DEMO_MODE=1 for a test server)');
+  if (env.jwtSecret.length < 32) throw new Error('JWT_SECRET must be at least 32 characters in production');
+}

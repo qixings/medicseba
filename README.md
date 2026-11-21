@@ -48,6 +48,16 @@ They cover login, catalogue, booking and payment, live queue, agent actions, rac
 4. Unpaid holds are released every 30 seconds.
 5. The agent's "next" pushes a `queue` event over socket.io to everyone watching that sitting, and sends "turn near" alerts at 5 and 2 ahead.
 
+## Test server on the VPS
+
+```bash
+git clone https://github.com/qixings/medicseba /opt/medicseba
+cd /opt/medicseba
+sudo bash deploy/setup.sh medicseba.770-raja.online
+```
+
+It installs Node 22 through nvm (system Node is untouched), creates its own `medicseba` database and user, builds both apps, starts the `medicseba-api` PM2 process on port 4100 (localhost only) and adds its own Nginx file. `DEMO_MODE=1` shows the login code on screen and uses test payments. Later updates: `bash deploy/update.sh` (shows the changes and asks before restarting).
+
 ## Going live (Hostinger VPS)
 
 API, behind Nginx with PM2:

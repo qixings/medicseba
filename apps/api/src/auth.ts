@@ -27,7 +27,7 @@ export async function requestOtp(rawPhone: string) {
   const code = String(crypto.randomInt(0, 1_000_000)).padStart(6, '0');
   await db.insert(otpCodes).values({ phone, codeHash: hash(code), expiresAt: new Date(Date.now() + OTP_TTL_MIN * 60_000) });
   await sendOtpSms(phone, code);
-  return { phone, devCode: env.smsProvider === 'log' && env.nodeEnv !== 'production' ? code : undefined };
+  return { phone, devCode: env.smsProvider === 'log' && (env.nodeEnv !== 'production' || env.demoMode) ? code : undefined };
 }
 
 export async function verifyOtp(rawPhone: string, code: string) {
