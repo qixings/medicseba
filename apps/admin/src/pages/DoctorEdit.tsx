@@ -18,7 +18,7 @@ export default function DoctorEdit() {
   const nav = useNavigate();
   const { can } = useAuth();
   const edit = can('MANAGER');
-  const doc = useLoad<Doctor>(isNew ? null : `/admin/doctors/${id}`);
+  const doc = useLoad<Doctor>(isNew ? null : `/admin/doctors/${id}`, { live: false });
   const specs = useLoad<Spec[]>('/admin/specialties');
   const [f, setF] = useState(blank);
   const [langs, setLangs] = useState('Bengali');

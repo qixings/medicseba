@@ -17,7 +17,7 @@ export default function ChamberEdit() {
   const nav = useNavigate();
   const { can } = useAuth();
   const edit = can('MANAGER');
-  const c = useLoad<Chamber>(isNew ? null : `/admin/chambers/${id}`);
+  const c = useLoad<Chamber>(isNew ? null : `/admin/chambers/${id}`, { live: false });
   const [f, setF] = useState(blank);
   const { run, busy } = useAction();
   const [login, setLogin] = useState<Agent | 'new' | null>(null);

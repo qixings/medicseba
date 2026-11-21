@@ -42,6 +42,8 @@ export async function patientRoutes(app: FastifyInstance) {
     auth.patch('/me', async (req) => {
       const b = z.object({ name: z.string().trim().min(1).max(60).optional(), language: z.enum(['en', 'bn']).optional(), age: z.number().int().min(0).max(120).optional(), gender: gender.optional() }).parse(req.body);
       const [u] = await db.update(users).set({ ...(b.name ? { name: b.name } : {}), ...(b.language ? { language: b.language } : {}) }).where(eq(users.id, req.userId!)).returning();
+      // Renaming later also renames the "myself" family member, so new bookings carry the new name.
+      if (b.name && (b.age === undefined || !b.gender)) await db.update(familyMembers).set({ name: b.name }).where(and(eq(familyMembers.userId, u.id), eq(familyMembers.isSelf, true), isNull(familyMembers.deletedAt)));
       if (b.name && b.age !== undefined && b.gender) {
         const [self] = await db.select().from(familyMembers).where(and(eq(familyMembers.userId, u.id), eq(familyMembers.isSelf, true), isNull(familyMembers.deletedAt)));
         if (self) await db.update(familyMembers).set({ name: b.name, age: b.age, gender: b.gender }).where(eq(familyMembers.id, self.id));

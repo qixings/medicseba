@@ -1,3 +1,4 @@
+import { broadcastChange, scopesFor } from './queue.js';
 import Fastify from 'fastify';
 import cors from '@fastify/cors';
 import rateLimit from '@fastify/rate-limit';
@@ -29,6 +30,10 @@ export async function buildApp() {
   });
 
   app.get('/health', async () => ({ ok: true }));
+  // After any successful change, nudge open apps to reload what they show.
+  app.addHook('onResponse', async (req, reply) => {
+    if (reply.statusCode < 400) { const sc = scopesFor(req.method, req.url); if (sc.length) broadcastChange(...sc); }
+  });
   await app.register(catalogRoutes, { prefix: '/v1' });
   await app.register(patientRoutes, { prefix: '/v1' });
   await app.register(agentRoutes, { prefix: '/v1' });

@@ -1,4 +1,5 @@
-import { createContext, useCallback, useContext, useEffect, useId, useState, type ReactNode } from 'react';
+import { io, type Socket } from 'socket.io-client';
+import { createContext, useCallback, useContext, useEffect, useId, useRef, useState, type ReactNode } from 'react';
 
 /* ---------- API ---------- */
 
@@ -56,16 +57,49 @@ export const useAuth = () => useContext(AuthCtx);
 
 /* ---------- data loading ---------- */
 
-export function useLoad<T>(path: string | null) {
+/* ---------- live updates ---------- */
+
+type LiveFn = () => void;
+const liveFns = new Set<LiveFn>();
+let liveSocket: Socket | null = null;
+let liveTimer: ReturnType<typeof setTimeout> | null = null;
+const fireLive = () => {
+  if (liveTimer) return;
+  liveTimer = setTimeout(() => { liveTimer = null; liveFns.forEach((f) => f()); }, 400);
+};
+/** One connection for the whole panel: any change anywhere reloads what is on screen. */
+function startLive() {
+  if (liveSocket) return;
+  liveSocket = io({ path: '/socket.io', transports: ['websocket'] });
+  let first = true;
+  liveSocket.on('connect', () => { if (!first) fireLive(); first = false; });
+  liveSocket.on('changed', fireLive);
+  document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') fireLive(); });
+}
+export function useLive(fn: LiveFn, on = true) {
+  const ref = useRef(fn);
+  ref.current = fn;
+  useEffect(() => {
+    if (!on) return;
+    startLive();
+    const f = () => ref.current();
+    liveFns.add(f);
+    return () => { liveFns.delete(f); };
+  }, [on]);
+}
+
+/** GET an admin path. Lists stay live; pass { live: false } where the data fills an edit form. */
+export function useLoad<T>(path: string | null, opts: { live?: boolean } = {}) {
   const [data, setData] = useState<T | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
-  const reload = useCallback(async () => {
+  const reload = useCallback(async (silent = false) => {
     if (!path) return;
-    setLoading(true); setError(null);
-    try { setData(await api<T>(path)); } catch (e) { setError((e as Error).message); } finally { setLoading(false); }
+    if (!silent) { setLoading(true); setError(null); }
+    try { setData(await api<T>(path)); setError(null); } catch (e) { if (!silent) setError((e as Error).message); } finally { if (!silent) setLoading(false); }
   }, [path]);
   useEffect(() => { void reload(); }, [reload]);
+  useLive(() => { void reload(true); }, opts.live !== false && !!path);
   return { data, error, loading, reload, setData };
 }
 

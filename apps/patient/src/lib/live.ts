@@ -1,15 +1,37 @@
 import { useEffect } from 'react';
+import { AppState, Platform } from 'react-native';
+import { focusManager } from '@tanstack/react-query';
 import { io, type Socket } from 'socket.io-client';
 import { API_URL } from './api';
 import { queryClient } from './query';
 
 let socket: Socket | null = null;
+let wasConnected = false;
+let timer: ReturnType<typeof setTimeout> | null = null;
+
+/** Mark everything stale; React Query refetches the screens that are open now and the rest when opened. */
+function refetchAll() {
+  if (timer) return;
+  timer = setTimeout(() => { timer = null; void queryClient.invalidateQueries(); }, 400);
+}
+
+/** Connect once at app start, and refetch when the app comes back to the foreground. */
+export function startLive() {
+  getSocket();
+  if (Platform.OS !== 'web') {
+    AppState.addEventListener('change', (st) => focusManager.setFocused(st === 'active'));
+  }
+}
 const watching = new Map<string, number>();
 
 function getSocket() {
   if (!socket) {
     socket = io(API_URL, { path: '/socket.io', transports: ['websocket'] });
-    socket.on('connect', () => watching.forEach((_, id) => socket!.emit('watch', id)));
+    socket.on('connect', () => { watching.forEach((_, id) => socket!.emit('watch', id)); if (wasConnected) refetchAll(); wasConnected = true; });
+    // Something changed on the server (admin edit, counter action, chamber update): refetch what is on screen.
+    socket.on('changed', (p: { scopes?: string[] }) => {
+      if (p.scopes?.some((x) => x === 'catalog' || x === 'bookings' || x === 'messages')) refetchAll();
+    });
     // Any queue change: refetch the live views and bookings that depend on it.
     socket.on('queue', () => {
       void queryClient.invalidateQueries({ predicate: (q) => {

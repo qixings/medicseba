@@ -4,7 +4,7 @@ import { router } from 'expo-router';
 import { api } from '@/lib/api';
 import { useAuth } from '@/lib/auth';
 import { dismissNewBookings, refreshBoard, useCounter, type Board, type SessionRow } from '@/lib/counter';
-import { useLiveBoard } from '@/lib/live';
+import { useLiveBoard, useServerChange } from '@/lib/live';
 import { useT, type Key } from '@/lib/i18n';
 import { storage } from '@/lib/storage';
 import { C } from '@/lib/theme';
@@ -47,6 +47,8 @@ export default function Today() {
 
   useEffect(() => { setList(null); void load(); }, [load]);
   useEffect(() => { if (online) void load(); }, [online, load]);
+  // Doctor or sitting changes from MedicSeba show up without a refresh.
+  useServerChange(['catalog'], () => { void load(); });
 
   return (
     <>

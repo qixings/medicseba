@@ -1,4 +1,5 @@
 import { useEffect } from 'react';
+import { startLive } from '@/lib/live';
 import { Platform, View } from 'react-native';
 import { Stack } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
@@ -14,7 +15,7 @@ export default function RootLayout() {
   const [fontsLoaded] = useFonts(Platform.OS === 'ios' ? {} : { Inter_300Light, Inter_400Regular, Inter_500Medium, Inter_600SemiBold, Inter_700Bold, Inter_800ExtraBold, Inter_900Black });
   const { ready, token, me } = useAuth((s) => s);
 
-  useEffect(() => { void restoreSession(); }, []);
+  useEffect(() => { void restoreSession(); startLive(); }, []);
 
   if (!ready || !fontsLoaded) return <View style={{ flex: 1, backgroundColor: C.bg }} />;
 

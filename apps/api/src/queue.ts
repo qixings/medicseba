@@ -20,6 +20,40 @@ export function attachIo(server: Server) {
   });
 }
 
+/** What kind of data changed, so open screens know whether to reload. Carries no data itself. */
+export type ChangeScope = 'catalog' | 'bookings' | 'requests' | 'messages' | 'admin';
+
+const pending = new Set<ChangeScope>();
+let flushTimer: NodeJS.Timeout | null = null;
+/** Tell every open app that something changed (batched over 300 ms so a burst sends one event). */
+export function broadcastChange(...scopes: ChangeScope[]) {
+  scopes.forEach((x) => pending.add(x));
+  if (flushTimer) return;
+  flushTimer = setTimeout(() => {
+    flushTimer = null;
+    const list = [...pending]; pending.clear();
+    io?.emit('changed', { scopes: list });
+  }, 300);
+}
+
+/** Which scopes a successful write to this path touches. */
+export function scopesFor(method: string, url: string): ChangeScope[] {
+  if (method === 'GET' || method === 'HEAD' || method === 'OPTIONS') return [];
+  const path = url.split('?')[0].replace(/^\/v1/, '');
+  if (path.startsWith('/auth')) return [];
+  if (path.endsWith('/receipt') || path.endsWith('/receipt/whatsapp') || path.endsWith('/preview') || path.endsWith('/test') || path === '/me/push-token') return [];
+  if (path.startsWith('/agent/requests')) return ['requests'];
+  if (path.startsWith('/admin/requests')) return ['requests', 'catalog'];
+  if (path.startsWith('/agent/messages') || path.startsWith('/admin/broadcasts')) return ['messages'];
+  if (path.startsWith('/agent/chamber')) return ['catalog'];
+  if (path.startsWith('/agent/sessions') || path.startsWith('/agent/tokens') || path.startsWith('/admin/sessions')) return ['bookings', 'catalog'];
+  if (/^\/admin\/(chambers|doctors|schedules|specialties|agents)/.test(path)) return ['catalog'];
+  if (path.startsWith('/admin/bookings')) return ['bookings'];
+  if (path.startsWith('/admin')) return ['admin'];
+  if (path.startsWith('/bookings') || path.startsWith('/pay') || path.startsWith('/webhooks') || path.startsWith('/holds')) return ['bookings'];
+  return [];
+}
+
 const WAITING = ['BOOKED', 'ARRIVED'] as const;
 
 /** Minutes per patient for this doctor, from recently finished tokens; falls back to the default. */

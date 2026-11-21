@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Pressable, RefreshControl, View } from 'react-native';
 import { Image } from 'expo-image';
 import { mediaUrl, patch, post, put } from '@/lib/api';
@@ -18,11 +18,16 @@ export default function Chamber() {
   const [fee, setFee] = useState('');
   const [msg, setMsg] = useState('');
   const [busy, setBusy] = useState(false);
+  // Fill the form from the server, but never overwrite what the counter is typing when a live update arrives.
+  const seeded = useRef<{ f: typeof f; fee: string } | null>(null);
   useEffect(() => {
     if (!data) return;
     const c = data.chamber;
-    setF({ phone: c.phone, address: c.address, area: c.area, landmark: c.landmark, openingHours: c.openingHours });
-    setFee(String(c.bookingFee));
+    const next = { phone: c.phone, address: c.address, area: c.area, landmark: c.landmark, openingHours: c.openingHours };
+    const prev = seeded.current;
+    setF((cur) => (!prev || JSON.stringify(cur) === JSON.stringify(prev.f) ? next : cur));
+    setFee((cur) => (!prev || cur === prev.fee ? String(c.bookingFee) : cur));
+    seeded.current = { f: next, fee: String(c.bookingFee) };
   }, [data]);
   const set = (k: keyof typeof f) => (v: string) => setF((x) => ({ ...x, [k]: v }));
 

@@ -291,6 +291,12 @@ export async function adminRoutes(app: FastifyInstance) {
     });
 
     /** Changes chambers asked for from the counter app. */
+    /** Counts for the sidebar badges. */
+    r.get('/admin/badges', async () => {
+      const [{ n }] = await db.select({ n: sql<number>`count(*)::int` }).from(changeRequests).where(eq(changeRequests.status, 'PENDING'));
+      return { requests: n };
+    });
+
     r.get('/admin/requests', async (req) => {
       const { status } = z.object({ status: z.enum(['PENDING', 'APPROVED', 'REJECTED']).default('PENDING') }).parse(req.query);
       const rows = await db.select().from(changeRequests).innerJoin(chambers, eq(chambers.id, changeRequests.chamberId))

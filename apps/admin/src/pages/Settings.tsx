@@ -9,7 +9,7 @@ type Data = {
 };
 
 export default function Settings() {
-  const { data, error, reload } = useLoad<Data>('/admin/settings/notifications');
+  const { data, error, reload } = useLoad<Data>('/admin/settings/notifications', { live: false });
   const [wa, setWa] = useState<Data['settings']['whatsapp'] | null>(null);
   const [testTo, setTestTo] = useState('');
   const { run, busy } = useAction();

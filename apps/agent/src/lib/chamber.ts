@@ -1,3 +1,4 @@
+import { useServerChange } from './live';
 import { useCallback, useEffect, useState } from 'react';
 import { Platform } from 'react-native';
 import * as ImagePicker from 'expo-image-picker';
@@ -24,6 +25,8 @@ export function useChamber() {
     try { setData(await api<ChamberInfo>('/agent/chamber')); setError(null); } catch (e) { setError((e as Error).message); }
   }, []);
   useEffect(() => { void reload(); }, [reload]);
+  // Approvals from MedicSeba, or another counter phone editing details, show up without a refresh.
+  useServerChange(['catalog', 'requests'], () => { void reload(); });
   return { data, error, reload };
 }
 

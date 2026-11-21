@@ -1,3 +1,4 @@
+import { onServerChange } from './live';
 import { api, post } from './api';
 import { storage } from './storage';
 import { create } from './store';
@@ -26,5 +27,7 @@ export async function markInboxRead() {
 let timer: ReturnType<typeof setInterval> | null = null;
 export function startInbox() {
   void loadInbox();
-  if (!timer) timer = setInterval(() => { void loadInbox(); }, 60_000);
+  if (timer) return;
+  timer = setInterval(() => { void loadInbox(); }, 5 * 60_000);
+  onServerChange(['messages'], () => { void loadInbox(); });
 }

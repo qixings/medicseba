@@ -1,8 +1,8 @@
-import { StrictMode, useState, type FormEvent } from 'react';
+import { StrictMode, useEffect, useState, type FormEvent } from 'react';
 import { createRoot } from 'react-dom/client';
 import { BrowserRouter, Navigate, NavLink, Route, Routes } from 'react-router-dom';
 import './styles.css';
-import { AuthProvider, Icon, PasswordInput, ToastProvider, useAuth, useTheme } from './lib';
+import { AuthProvider, Icon, PasswordInput, ToastProvider, useAuth, useLoad, useTheme } from './lib';
 import Dashboard from './pages/Dashboard';
 import Sittings from './pages/Sittings';
 import Doctors from './pages/Doctors';
@@ -44,14 +44,14 @@ function Login() {
   );
 }
 
-const NAV: { to: string; label: string; icon: string; owner?: boolean }[] = [
+const NAV: { to: string; label: string; icon: string; owner?: boolean; badge?: 'requests' }[] = [
   { to: '/', label: 'Today', icon: 'home' },
   { to: '/sittings', label: 'Sittings', icon: 'cal' },
   { to: '/bookings', label: 'Bookings', icon: 'receipt' },
   { to: '/doctors', label: 'Doctors', icon: 'steth' },
   { to: '/chambers', label: 'Chambers', icon: 'store' },
   { to: '/specialties', label: 'Specialties', icon: 'tag' },
-  { to: '/requests', label: 'Requests', icon: 'inbox' },
+  { to: '/requests', label: 'Requests', icon: 'inbox', badge: 'requests' },
   { to: '/patients', label: 'Patients', icon: 'users' },
   { to: '/messages', label: 'Messages', icon: 'send' },
   { to: '/money', label: 'Money', icon: 'money' },
@@ -72,13 +72,19 @@ function ThemeToggle() {
 
 function Shell() {
   const { admin, logout, can } = useAuth();
+  // Waiting chamber requests, kept live like everything else.
+  const badges = useLoad<{ requests: number }>(admin ? '/admin/badges' : null);
+  const waiting = badges.data?.requests ?? 0;
+  useEffect(() => { document.title = waiting ? `(${waiting}) MedicSeba Admin` : 'MedicSeba Admin'; }, [waiting]);
   if (!admin) return <Login />;
   return (
     <div className="shell">
       <nav className="side" aria-label="Main">
         <div className="logo"><img src="/admin/logo.svg" alt="MedicSeba" /></div>
         {NAV.filter((n) => !n.owner || can('OWNER')).map((n) => (
-          <NavLink key={n.to} to={n.to} end={n.to === '/'}><Icon name={n.icon} />{n.label}</NavLink>
+          <NavLink key={n.to} to={n.to} end={n.to === '/'}><Icon name={n.icon} />{n.label}
+            {n.badge && badges.data?.[n.badge] ? <span className="badge" aria-label={`${badges.data[n.badge]} waiting`}>{badges.data[n.badge]}</span> : null}
+          </NavLink>
         ))}
         <div className="grow" />
         <ThemeToggle />

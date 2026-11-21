@@ -181,3 +181,5 @@ textarea.input { height: auto; min-height: 80px; padding: 10px 12px; resize: ver
 .seg { display: inline-flex; background: var(--line); border-radius: 12px; padding: 3px; gap: 2px; }
 .seg button { border: 0; background: transparent; height: 34px; padding: 0 14px; border-radius: 9px; font-weight: 700; color: var(--sec); cursor: pointer; }
 .seg button.on { background: var(--surface); color: var(--ink); box-shadow: var(--shadow); }
+
+.side a .badge { margin-left: auto; min-width: 20px; height: 20px; padding: 0 6px; border-radius: 10px; background: #E5484D; color: #fff; font-size: 12px; font-weight: 800; display: inline-flex; align-items: center; justify-content: center; font-variant-numeric: tabular-nums; }
