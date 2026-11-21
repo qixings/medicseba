@@ -17,7 +17,12 @@ export async function restore() {
     useAuth.setState({ token, chamber });
     startSyncLoop();
     // Refresh the chamber name when online; offline the saved one is used.
-    api<{ chamber: Chamber }>('/agent/me').then((r) => { useAuth.setState({ chamber: r.chamber }); void storage.setJSON('agent_chamber', r.chamber); }).catch(() => {});
+    api<{ chamber: Chamber; token?: string }>('/agent/me').then(async (r) => {
+      useAuth.setState({ chamber: r.chamber });
+      void storage.setJSON('agent_chamber', r.chamber);
+      // Fresh login from the server when ours is older than a week, so the counter stays signed in.
+      if (r.token) { await storage.set('agent_token', r.token); setAuthToken(r.token); useAuth.setState({ token: r.token }); }
+    }).catch(() => {});
   }
   useAuth.setState({ ready: true });
 }

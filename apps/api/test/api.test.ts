@@ -374,3 +374,15 @@ test('broadcasts reach patients and counters; patient profile; settings', async 
   const test = await call('POST', '/admin/settings/notifications/test', { phone: '9876543210' }, own);
   assert.equal(test.status, 502, 'test send says WhatsApp is not connected');
 });
+
+test('logins renew themselves after a week', async () => {
+  const jwt = (await import('jsonwebtoken')).default;
+  const { env } = await import('../src/env.js');
+  const u = await login('9800000001', 'Old Login');
+  const me = (await call('GET', '/me', undefined, u.token)).body;
+  assert.equal(me.token, undefined, 'a fresh login is not renewed');
+  const old = jwt.sign({ sub: me.id, role: 'patient', iat: Math.floor(Date.now() / 1000) - 8 * 86_400 }, env.jwtSecret, { expiresIn: '90d' });
+  const r = (await call('GET', '/me', undefined, old)).body;
+  assert.ok(r.token, 'an 8-day-old login gets a new one');
+  assert.equal((await call('GET', '/me', undefined, r.token)).status, 200);
+});

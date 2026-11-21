@@ -1,4 +1,7 @@
-import { Linking, ScrollView, View } from 'react-native';
+import { useState } from 'react';
+import { Linking, ScrollView, useWindowDimensions, View } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { PhotoPlaceholder } from '@/components/Mark';
 import { Image } from 'expo-image';
 import { mediaUrl } from '@/lib/api';
 import { openMaps } from '@/lib/maps';
@@ -16,6 +19,9 @@ export default function Chamber() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const q = useApi<ChamberDetail>(`/chambers/${id}`);
   const c = q.data;
+  const ins = useSafeAreaInsets();
+  const { width } = useWindowDimensions();
+  const [page, setPage] = useState(0);
 
   return (
     <View style={{ flex: 1 }}>
@@ -24,21 +30,24 @@ export default function Chamber() {
         <Status loading={q.isLoading} error={q.error} onRetry={() => q.refetch()} />
         {c ? (
           <>
-            {c.photos.length ? (
-              <ScrollView horizontal pagingEnabled showsHorizontalScrollIndicator={false} style={{ marginHorizontal: -18 }} contentContainerStyle={{ paddingHorizontal: 18, gap: 10 }}>
-                {c.photos.map((p, i) => (
-                  <View key={p} style={{ width: c.photos.length > 1 ? 300 : 354, height: 200, borderRadius: 24, overflow: 'hidden', backgroundColor: C.tint, ...S.card }}>
-                    <Image source={mediaUrl(p)} style={{ width: '100%', height: '100%' }} contentFit="cover" accessibilityLabel={`${c.name} photo ${i + 1}`} />
-                    {i === 0 ? <View style={{ position: 'absolute', top: 12, left: 12 }}><Pill text={c.openNow ? t('openNow') : t('closed')} tone={c.openNow ? 'good' : 'warn'} /></View> : null}
-                  </View>
-                ))}
-              </ScrollView>
-            ) : (
-              <View style={{ height: 150, borderRadius: 24, backgroundColor: C.tint, padding: 16, justifyContent: 'space-between', ...S.card }}>
+            {/* Photos fill the full width as plain rectangles; without photos the MedicSeba mark shows. */}
+            <View style={{ marginHorizontal: -18, marginTop: -70 - ins.top, height: 260 + ins.top, backgroundColor: C.tint }}>
+              {c.photos.length ? (
+                <ScrollView horizontal pagingEnabled showsHorizontalScrollIndicator={false} onScroll={(e) => setPage(Math.round(e.nativeEvent.contentOffset.x / width))} scrollEventThrottle={32}>
+                  {c.photos.map((p, i) => (
+                    <Image key={p} source={mediaUrl(p)} style={{ width, height: 260 + ins.top }} contentFit="cover" accessibilityLabel={`${c.name} photo ${i + 1}`} />
+                  ))}
+                </ScrollView>
+              ) : <PhotoPlaceholder style={{ flex: 1, paddingTop: ins.top }} size={64} />}
+              <View style={{ position: 'absolute', left: 18, bottom: 14, flexDirection: 'row', alignItems: 'center', gap: 8 }}>
                 <Pill text={c.openNow ? t('openNow') : t('closed')} tone={c.openNow ? 'good' : 'warn'} />
-                <Icon name="store" size={52} color={C.link} width={1.6} />
               </View>
-            )}
+              {c.photos.length > 1 ? (
+                <View style={{ position: 'absolute', right: 18, bottom: 18, flexDirection: 'row', gap: 5 }}>
+                  {c.photos.map((p, i) => <View key={p} style={{ width: i === page ? 16 : 6, height: 6, borderRadius: 3, backgroundColor: i === page ? C.white : 'rgba(255,255,255,0.6)' }} />)}
+                </View>
+              ) : null}
+            </View>
             <H1 size={30} style={{ marginTop: 14 }}>{c.name}</H1>
             <T w="light" size={15} color={C.sec} style={{ marginTop: 4 }}>{c.address}{c.landmark ? `. ${c.landmark}` : ''}</T>
             <T w="bold" size={14} style={{ marginTop: 6 }}>{t('hours')} <T numeric w="light" size={14}>{c.openingHours.replace('-', ' to ')}</T></T>

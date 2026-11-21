@@ -1,6 +1,7 @@
 import { Pressable, StyleSheet, View } from 'react-native';
 import { Image } from 'expo-image';
 import { mediaUrl } from '@/lib/api';
+import { PhotoPlaceholder } from './Mark';
 import { router } from 'expo-router';
 import { C, S } from '@/lib/theme';
 import { shortDate, useT } from '@/lib/i18n';
@@ -86,9 +87,10 @@ export function ChamberCard({ c, wide }: { c: Chamber; wide?: boolean }) {
   const t = useT();
   return (
     <Card onPress={() => router.push(`/chamber/${c.id}`)} style={[{ overflow: 'hidden' }, wide ? null : { width: 228 }]}>
-      <View style={{ height: c.photos[0] ? 110 : 80, backgroundColor: C.tint, flexDirection: 'row', alignItems: 'flex-end', justifyContent: 'space-between', padding: 12, paddingHorizontal: 14 }}>
-        {c.photos[0] ? <Image source={mediaUrl(c.photos[0])} style={StyleSheet.absoluteFill} contentFit="cover" accessibilityLabel={c.name} /> : null}
-        {c.photos[0] ? <View /> : <Icon name="store" size={34} color={C.link} width={1.8} />}
+      <View style={{ height: 110, backgroundColor: C.tint, flexDirection: 'row', alignItems: 'flex-end', justifyContent: 'flex-end', padding: 12, paddingHorizontal: 14 }}>
+        {c.photos[0]
+          ? <Image source={mediaUrl(c.photos[0])} style={StyleSheet.absoluteFill} contentFit="cover" accessibilityLabel={c.name} />
+          : <PhotoPlaceholder style={StyleSheet.absoluteFill} size={40} />}
         <View style={{ height: 24, paddingHorizontal: 10, borderRadius: 12, backgroundColor: C.white, justifyContent: 'center' }}>
           <T w="bold" size={12} color={c.openNow ? C.good : C.warn}>{c.openNow ? t('openNow') : `${t('open')} ${c.openingHours.split('-')[0] ?? ''}`}</T>
         </View>

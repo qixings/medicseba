@@ -43,8 +43,24 @@ export async function verifyOtp(rawPhone: string, code: string) {
   let [user] = await db.select().from(users).where(eq(users.phone, phone));
   const isNew = !user;
   if (!user) [user] = await db.insert(users).values({ phone }).returning();
-  const token = jwt.sign({ sub: user.id, role: 'patient' }, env.jwtSecret, { expiresIn: '90d' });
+  const token = signPatient(user.id);
   return { token, user, isNew };
+}
+
+export function signPatient(userId: string) {
+  return jwt.sign({ sub: userId, role: 'patient' }, env.jwtSecret, { expiresIn: '90d' });
+}
+
+/**
+ * Logins renew themselves: when the app checks in and its login is older than a week, it gets a fresh one.
+ * So patients and counters that open the app at least once every 90 / 30 days never have to sign in again.
+ */
+export function renewedToken(req: FastifyRequest): string | undefined {
+  const c = readClaims(req.headers.authorization);
+  if (!c?.iat || Date.now() / 1000 - c.iat < 7 * 86_400) return undefined;
+  if (c.role === 'patient') return signPatient(c.sub);
+  if (c.role === 'agent' && c.chamberId) return signAgent(c.sub, c.chamberId);
+  return undefined;
 }
 
 export function signAgent(agentId: string, chamberId: string) {

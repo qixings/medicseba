@@ -18,7 +18,9 @@ type Auth = {
 export const useAuth = create<Auth>(() => ({ ready: false, token: null, me: null }));
 
 export async function loadMe() {
-  const me = await api<Me>('/me');
+  const { token, ...me } = await api<Me & { token?: string }>('/me');
+  // The server hands out a fresh login when ours is older than a week, so patients stay signed in.
+  if (token) { await storage.set(KEY, token); setAuthToken(token); useAuth.setState({ token }); }
   useAuth.setState({ me });
   void registerPush();
   if (me.language) useLang.getState().setLang(me.language);

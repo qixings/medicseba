@@ -3,7 +3,7 @@ import bcrypt from 'bcryptjs';
 import { z } from 'zod';
 import { and, asc, desc, eq, isNotNull, isNull } from 'drizzle-orm';
 import { db, schema } from '../db.js';
-import { requireAgent, signAgent } from '../auth.js';
+import { renewedToken, requireAgent, signAgent } from '../auth.js';
 import { ApiError, forbidden, notFound } from '../errors.js';
 import { addWalkIn, callNext, closeBooking, reopenBooking, setDoctorStatus, tokenAction } from '../booking.js';
 import { istDate, prettyTime } from '../time.js';
@@ -43,7 +43,7 @@ export async function agentRoutes(app: FastifyInstance) {
 
     r.get('/agent/me', async (req) => {
       const [c] = await db.select().from(chambers).where(eq(chambers.id, req.agent!.chamberId));
-      return { chamber: { id: c.id, name: c.name, area: c.area } };
+      return { chamber: { id: c.id, name: c.name, area: c.area }, token: renewedToken(req) };
     });
 
     /** Sittings at this chamber on a day (default today). */

@@ -6,6 +6,7 @@ import { post, type ApiError } from '@/lib/api';
 import { invalidate, useApi } from '@/lib/query';
 import { useWatchSession } from '@/lib/live';
 import { openMaps } from '@/lib/maps';
+import { useStatusBarColor } from '@/lib/statusbar';
 import { shortDate, useT } from '@/lib/i18n';
 import { C, S } from '@/lib/theme';
 import type { Live as LiveData } from '@/lib/types';
@@ -22,6 +23,7 @@ export default function Live() {
   const t = useT();
   const ins = useSafeAreaInsets();
   const status = useDoctorStatus();
+  useStatusBarColor(C.deep);
   const { id } = useLocalSearchParams<{ id: string }>();
   // The socket pushes changes; the 30 s poll is a backup for weak networks.
   const q = useApi<LiveData>(`/bookings/${id}/live`, { refetchInterval: 30_000 });

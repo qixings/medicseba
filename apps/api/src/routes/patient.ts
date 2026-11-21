@@ -2,7 +2,7 @@ import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import { and, asc, count, desc, eq, gte, inArray, isNull, lt, or } from 'drizzle-orm';
 import { db, schema } from '../db.js';
-import { requestOtp, requireUser, verifyOtp } from '../auth.js';
+import { renewedToken, requestOtp, requireUser, verifyOtp } from '../auth.js';
 import { badRequest, notFound } from '../errors.js';
 import { absentChoice, cancelBooking, confirmPayment, holdToken, reschedule } from '../booking.js';
 import { liveView } from '../queue.js';
@@ -35,7 +35,7 @@ export async function patientRoutes(app: FastifyInstance) {
       const [u] = await db.select().from(users).where(eq(users.id, req.userId!));
       if (!u) throw notFound('Account');
       const [{ n }] = await db.select({ n: count() }).from(familyMembers).where(and(eq(familyMembers.userId, u.id), isNull(familyMembers.deletedAt)));
-      return { id: u.id, phone: u.phone, name: u.name, language: u.language, members: n };
+      return { id: u.id, phone: u.phone, name: u.name, language: u.language, members: n, token: renewedToken(req) };
     });
 
     /** First-time profile (name + age + gender creates the "self" family member), or later edits. */
