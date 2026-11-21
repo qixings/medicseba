@@ -6,7 +6,7 @@ import { post, type ApiError } from '@/lib/api';
 import { saveLang } from '@/lib/auth';
 import { useT } from '@/lib/i18n';
 import { C, F, num } from '@/lib/theme';
-import { Icon } from '@/components/Icon';
+import { Logo } from '@/components/Logo';
 import { Button, T, tap } from '@/components/ui';
 
 export default function Login() {
@@ -34,12 +34,7 @@ export default function Login() {
     <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={{ flex: 1, backgroundColor: C.bg }}>
       <View style={{ flex: 1, paddingTop: ins.top + 16, paddingHorizontal: 24, paddingBottom: ins.bottom + 24 }}>
         <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
-          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
-            <View style={{ width: 36, height: 36, borderRadius: 11, backgroundColor: C.brand, alignItems: 'center', justifyContent: 'center' }}>
-              <Icon name="plus" size={18} color={C.white} width={3} />
-            </View>
-            <T w="heavy" size={20} style={{ letterSpacing: -0.3 }}>{t('brand')}</T>
-          </View>
+          <Logo height={30} />
           <Pressable accessibilityRole="button" onPress={() => { tap(); void saveLang(t.lang === 'en' ? 'bn' : 'en'); }}
             style={{ height: 40, paddingHorizontal: 14, borderRadius: 20, borderWidth: 1, borderColor: C.line, backgroundColor: C.white, justifyContent: 'center' }}>
             <T w="semibold" size={14}>{t('langToggle')}</T>

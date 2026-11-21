@@ -5,7 +5,7 @@ import type { ApiError } from '@/lib/api';
 import { signIn } from '@/lib/auth';
 import { setLang, useT } from '@/lib/i18n';
 import { C } from '@/lib/theme';
-import { Icon } from '@/components/Icon';
+import { Logo } from '@/components/Logo';
 import { Button, Field, H1, T, tap } from '@/components/ui';
 
 export default function Login() {
@@ -25,11 +25,11 @@ export default function Login() {
     <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={{ flex: 1, backgroundColor: C.bg }}>
       <View style={{ flex: 1, paddingTop: ins.top + 16, paddingHorizontal: 24, paddingBottom: ins.bottom + 24, width: '100%', maxWidth: 480, alignSelf: 'center' }}>
         <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
-          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
-            <View style={{ width: 36, height: 36, borderRadius: 11, backgroundColor: C.night, alignItems: 'center', justifyContent: 'center' }}>
-              <Icon name="plus" size={18} color={C.brand} width={3} />
+          <View style={{ flexDirection: 'row', alignItems: 'flex-end', gap: 8 }}>
+            <Logo height={26} />
+            <View style={{ height: 22, paddingHorizontal: 8, borderRadius: 6, backgroundColor: C.night, justifyContent: 'center', marginBottom: 1 }}>
+              <T w="bold" size={12} color={C.white}>{t('counter')}</T>
             </View>
-            <T w="heavy" size={20} style={{ letterSpacing: -0.3 }}>{t('brand')}</T>
           </View>
           <Pressable accessibilityRole="button" onPress={() => { tap(); setLang(t.lang === 'en' ? 'bn' : 'en'); }}
             style={{ height: 40, paddingHorizontal: 14, borderRadius: 20, borderWidth: 1, borderColor: C.line, backgroundColor: C.white, justifyContent: 'center' }}>
