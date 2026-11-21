@@ -136,6 +136,8 @@ export const tokens = pgTable('tokens', {
   absentChoice: text('absent_choice'),
   servedAt: timestamp('served_at', { withTimezone: true }),
   doneAt: timestamp('done_at', { withTimezone: true }),
+  /** Set by the agent app for walk-ins, so a walk-in sent twice (offline retry) is only added once. */
+  clientRef: text('client_ref').unique(),
   createdAt: createdAt(),
 }, (t) => [uniqueIndex('token_session_number').on(t.sessionId, t.number), index('token_user_idx').on(t.userId)]);
 

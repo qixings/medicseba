@@ -61,12 +61,8 @@ npm run db:migrate:prod
 [ -f ../../.seeded ] || { npx tsx src/scripts/seed.ts && touch ../../.seeded; }
 cd ../..
 
-say "Building the web app"
-cd apps/patient
-printf 'EXPO_PUBLIC_API_URL=https://%s\n' "$DOMAIN" > .env
-npm ci --no-audit --no-fund
-npx expo export --platform web
-cd ../..
+say "Building the patient app and the counter app"
+DOMAIN="$DOMAIN" bash deploy/build-web.sh
 
 say "Starting the API with PM2 as medicseba-api"
 pm2 delete medicseba-api >/dev/null 2>&1 || true
@@ -84,4 +80,5 @@ systemctl reload nginx
 
 say "Done"
 echo "Open https://$DOMAIN on your phone (after the Cloudflare DNS record is added)."
+echo "Counter app: https://$DOMAIN/agent (sample login citymedicos / demo1234)."
 echo "The login code shows on screen because DEMO_MODE=1. Payments are test payments."

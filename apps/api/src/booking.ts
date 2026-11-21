@@ -209,26 +209,40 @@ async function agentSession(chamberId: string, sessionId: string) {
   return s;
 }
 
-export async function addWalkIn(chamberId: string, sessionId: string, p: { name: string; age?: number; gender?: 'MALE' | 'FEMALE' | 'OTHER'; phone?: string }) {
+export async function addWalkIn(chamberId: string, sessionId: string, p: { name: string; age?: number; gender?: 'MALE' | 'FEMALE' | 'OTHER'; phone?: string; clientRef?: string }) {
   await agentSession(chamberId, sessionId);
+  if (p.clientRef) {
+    // Already added (the app retried after going offline): return the same token.
+    const [dup] = await db.select().from(tokens).where(eq(tokens.clientRef, p.clientRef));
+    if (dup) return dup;
+  }
   const t = await db.transaction(async (tx) => {
     const s = await lockSession(tx, sessionId);
-    if (s.status === 'CANCELLED' || s.status === 'ENDED') throw conflict('session_closed', 'This session is over');
-    if (s.onlineTaken + s.counterTaken >= s.tokenLimit) throw conflict('session_full', 'No tokens left in this session');
+    if (s.status === 'CANCELLED' || s.status === 'ENDED') throw conflict('session_closed', 'This sitting is over');
+    if (s.onlineTaken + s.counterTaken >= s.tokenLimit) throw conflict('session_full', 'No tokens left in this sitting');
     await tx.update(sessions).set({ counterTaken: inc(sessions.counterTaken), nextNumber: inc(sessions.nextNumber) }).where(eq(sessions.id, s.id));
-    const [row] = await tx.insert(tokens).values({ sessionId, number: s.nextNumber, source: 'WALKIN', state: 'BOOKED', patientName: p.name, patientAge: p.age, patientGender: p.gender, phone: p.phone }).returning();
+    const [row] = await tx.insert(tokens).values({
+      sessionId, number: s.nextNumber, source: 'WALKIN', state: 'ARRIVED', patientName: p.name,
+      patientAge: p.age, patientGender: p.gender, phone: p.phone, clientRef: p.clientRef,
+    }).returning();
     return row;
   });
   await broadcastSession(sessionId);
   return t;
 }
 
-/** Finish the current patient and call the next one in token order. */
-export async function callNext(chamberId: string, sessionId: string) {
+/**
+ * Finish the current patient (done, or missed if they did not come in) and call the next one in token order.
+ * `expect` is the serving number the agent saw. If the queue has already moved past it (a retry after being
+ * offline, or two phones at one counter), nothing happens, so a patient is never skipped by accident.
+ */
+export async function callNext(chamberId: string, sessionId: string, opts: { expect?: number; current?: 'DONE' | 'MISSED' } = {}) {
   await agentSession(chamberId, sessionId);
   const next = await db.transaction(async (tx) => {
     const s = await lockSession(tx, sessionId);
-    await tx.update(tokens).set({ state: 'DONE', doneAt: new Date() }).where(and(eq(tokens.sessionId, sessionId), eq(tokens.state, 'SERVING')));
+    if (opts.expect !== undefined && s.servingNumber !== opts.expect) return null;
+    const finish = opts.current === 'MISSED' ? { state: 'MISSED' as const } : { state: 'DONE' as const, doneAt: new Date() };
+    await tx.update(tokens).set(finish).where(and(eq(tokens.sessionId, sessionId), eq(tokens.state, 'SERVING')));
     const [n] = await tx.select().from(tokens)
       .where(and(eq(tokens.sessionId, sessionId), inArray(tokens.state, ['BOOKED', 'ARRIVED']), isNotNull(tokens.number), gt(tokens.number, s.servingNumber)))
       .orderBy(asc(tokens.number)).limit(1);
@@ -241,6 +255,42 @@ export async function callNext(chamberId: string, sessionId: string) {
   await broadcastSession(sessionId);
   await checkAheadAlerts(sessionId);
   return next;
+}
+
+export type TokenAction = 'arrived' | 'missed' | 'done' | 'call' | 'restore';
+
+/**
+ * Counter actions on one token. All of them are safe to repeat.
+ * - arrived: patient is at the chamber
+ * - missed: called but not there; they can be called again later
+ * - call: call this patient now (a missed patient who came back, or out of order)
+ * - done: finished with the doctor
+ * - restore: undo a missed mark, back into the waiting line
+ */
+export async function tokenAction(chamberId: string, tokenId: string, action: TokenAction) {
+  const [t] = await db.select().from(tokens).where(eq(tokens.id, tokenId));
+  if (!t || t.number === null) throw notFound('Token');
+  await agentSession(chamberId, t.sessionId);
+  await db.transaction(async (tx) => {
+    const s = await lockSession(tx, t.sessionId);
+    const [cur] = await tx.select().from(tokens).where(eq(tokens.id, tokenId));
+    const st = cur.state;
+    if (action === 'arrived' && st === 'BOOKED') await tx.update(tokens).set({ state: 'ARRIVED' }).where(eq(tokens.id, tokenId));
+    if (action === 'missed' && ['BOOKED', 'ARRIVED', 'SERVING'].includes(st)) await tx.update(tokens).set({ state: 'MISSED' }).where(eq(tokens.id, tokenId));
+    if (action === 'restore' && st === 'MISSED') await tx.update(tokens).set({ state: 'ARRIVED' }).where(eq(tokens.id, tokenId));
+    if (action === 'done' && st === 'SERVING') await tx.update(tokens).set({ state: 'DONE', doneAt: new Date() }).where(eq(tokens.id, tokenId));
+    if (action === 'call' && ['BOOKED', 'ARRIVED', 'MISSED'].includes(st)) {
+      await tx.update(tokens).set({ state: 'DONE', doneAt: new Date() }).where(and(eq(tokens.sessionId, t.sessionId), eq(tokens.state, 'SERVING')));
+      await tx.update(tokens).set({ state: 'SERVING', servedAt: new Date() }).where(eq(tokens.id, tokenId));
+      // The serving number never goes backwards, so "patients ahead" stays right for everyone else.
+      const ds: DoctorStatus = s.doctorStatus === 'ON_TIME' || s.doctorStatus === 'LATE' ? 'ARRIVED' : s.doctorStatus;
+      await tx.update(sessions).set({ servingNumber: Math.max(s.servingNumber, t.number!), doctorStatus: ds, arrivedAt: s.arrivedAt ?? new Date() }).where(eq(sessions.id, s.id));
+    }
+  });
+  await broadcastSession(t.sessionId);
+  if (action === 'call') await checkAheadAlerts(t.sessionId);
+  const [after] = await db.select().from(tokens).where(eq(tokens.id, tokenId));
+  return after;
 }
 
 export async function setDoctorStatus(chamberId: string, sessionId: string, status: DoctorStatus, lateMinutes = 0) {
@@ -267,7 +317,14 @@ export async function setDoctorStatus(chamberId: string, sessionId: string, stat
 }
 
 export async function closeBooking(chamberId: string, sessionId: string) {
-  await agentSession(chamberId, sessionId);
-  await db.update(sessions).set({ status: 'CLOSED' }).where(eq(sessions.id, sessionId));
+  const s = await agentSession(chamberId, sessionId);
+  if (s.status === 'OPEN') await db.update(sessions).set({ status: 'CLOSED' }).where(eq(sessions.id, sessionId));
+  await broadcastSession(sessionId);
+}
+
+/** Undo a manual close, while the sitting has not ended. */
+export async function reopenBooking(chamberId: string, sessionId: string) {
+  const s = await agentSession(chamberId, sessionId);
+  if (s.status === 'CLOSED') await db.update(sessions).set({ status: 'OPEN' }).where(eq(sessions.id, sessionId));
   await broadcastSession(sessionId);
 }

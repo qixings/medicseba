@@ -6,7 +6,8 @@ Online token booking for doctors' chambers and pharmacies in Kailashahar. Patien
 | --- | --- | --- |
 | API | `apps/api` | Node 22, Fastify, Drizzle ORM, PostgreSQL, socket.io |
 | Patient app | `apps/patient` | Expo (Android, iPhone, web), Expo Router, React Query |
-| Agent app, admin panel | next | |
+| Chamber counter app | `apps/agent` | Expo (Android, iPad, web at `/agent`), works offline |
+| Admin panel | next | |
 
 ## Run it locally
 

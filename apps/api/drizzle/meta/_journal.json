@@ -8,6 +8,13 @@
       "when": 1795229491122,
       "tag": "0000_init",
       "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "7",
+      "when": 1795254757388,
+      "tag": "0001_agent_client_ref",
+      "breakpoints": true
     }
   ]
 }

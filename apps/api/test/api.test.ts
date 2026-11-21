@@ -199,3 +199,61 @@ test('doctor not coming: patient picks refund or move', async () => {
   const newHold = await call('POST', '/bookings/hold', { sessionId: s.id, memberId: u1.memberId }, u1.token);
   assert.equal(newHold.body.error, 'session_closed');
 });
+
+test('agent counter: board, walk-in retry, safe next, missed and recall, close and reopen', async () => {
+  const s = (await sessionsOf('Dr. Amit Nath')).find((x) => x.date >= addDays(istDate(), 2))!;
+  // Usernames are not case sensitive.
+  assert.equal((await call('POST', '/agent/login', { username: 'CityMedicos', password: 'demo1234' })).status, 200);
+  // Amit sits at two chambers; use the agent of this sitting's chamber.
+  const [ch] = await db.select().from(schema.chambers).where(eq(schema.chambers.id, s.chamberId));
+  const [acc] = await db.select().from(schema.agentAccounts).where(eq(schema.agentAccounts.chamberId, ch.id));
+  const a = (await call('POST', '/agent/login', { username: acc.username, password: 'demo1234' })).body.token as string;
+
+  const u = await login('9500000001', 'Online Patient');
+  const b = await book(u.token, s.id, u.memberId);
+  assert.equal(b.body.token.number, 1);
+
+  const w1 = await call('POST', `/agent/sessions/${s.id}/walkin`, { name: 'Counter One', age: 40, clientRef: 'dev1-abc' }, a);
+  const again = await call('POST', `/agent/sessions/${s.id}/walkin`, { name: 'Counter One', age: 40, clientRef: 'dev1-abc' }, a);
+  assert.equal(w1.body.number, 2);
+  assert.equal(again.body.id, w1.body.id, 'a retried walk-in is not added twice');
+  assert.equal(w1.body.state, 'ARRIVED');
+
+  let board = await call('GET', `/agent/sessions/${s.id}/board`, undefined, a);
+  assert.equal(board.body.tokens.length, 2);
+  assert.equal(board.body.session.counterTaken, 1);
+  assert.ok(board.body.tokens[0].phone === null || board.body.tokens[0].phone.includes('xxxxxx'), 'online phone numbers are masked');
+
+  const n1 = await call('POST', `/agent/sessions/${s.id}/next`, { expect: 0 }, a);
+  assert.equal(n1.body.serving.number, 1);
+  // Same press replayed after being offline: no skip.
+  const replay = await call('POST', `/agent/sessions/${s.id}/next`, { expect: 0 }, a);
+  assert.equal(replay.body.serving, null);
+  board = await call('GET', `/agent/sessions/${s.id}/board`, undefined, a);
+  assert.equal(board.body.session.servingNumber, 1);
+
+  // Token 1 did not come in: missed, call 2.
+  const n2 = await call('POST', `/agent/sessions/${s.id}/next`, { expect: 1, current: 'MISSED' }, a);
+  assert.equal(n2.body.serving.number, 2);
+  board = await call('GET', `/agent/sessions/${s.id}/board`, undefined, a);
+  assert.equal(board.body.tokens[0].state, 'MISSED');
+
+  // Patient 1 comes back: call them now; serving number does not go backwards.
+  const back = await call('POST', `/agent/tokens/${board.body.tokens[0].id}/call`, {}, a);
+  assert.equal(back.body.state, 'SERVING');
+  board = await call('GET', `/agent/sessions/${s.id}/board`, undefined, a);
+  assert.equal(board.body.session.servingNumber, 2);
+  assert.equal(board.body.tokens[1].state, 'DONE');
+
+  await call('POST', `/agent/sessions/${s.id}/close`, {}, a);
+  const late = await login('9500000002', 'Late Comer');
+  const closed = await call('POST', '/bookings/hold', { sessionId: s.id, memberId: late.memberId }, late.token);
+  assert.equal(closed.status, 409);
+  await call('POST', `/agent/sessions/${s.id}/reopen`, {}, a);
+  board = await call('GET', `/agent/sessions/${s.id}/board`, undefined, a);
+  assert.equal(board.body.session.status, 'OPEN');
+
+  const list = await call('GET', `/agent/sessions?date=${s.date}`, undefined, a);
+  assert.ok(list.body.sessions.some((x: { id: string }) => x.id === s.id));
+});
+
