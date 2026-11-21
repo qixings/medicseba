@@ -70,7 +70,7 @@ cd ../..
 
 say "Starting the API with PM2 as medicseba-api"
 pm2 delete medicseba-api >/dev/null 2>&1 || true
-pm2 start apps/api/dist/index.js --name medicseba-api --interpreter "$NODE22" --cwd "$APP_DIR/apps/api"
+pm2 start "$APP_DIR/apps/api/dist/index.js" --name medicseba-api --interpreter "$NODE22" --cwd "$APP_DIR/apps/api"
 pm2 save
 sleep 2
 curl -fsS "http://127.0.0.1:$PORT/health" && echo
