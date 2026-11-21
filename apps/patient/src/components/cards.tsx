@@ -91,9 +91,12 @@ export function ChamberCard({ c, wide }: { c: Chamber; wide?: boolean }) {
         {c.photos[0]
           ? <Image source={mediaUrl(c.photos[0])} style={StyleSheet.absoluteFill} contentFit="cover" accessibilityLabel={c.name} />
           : <PhotoPlaceholder style={StyleSheet.absoluteFill} size={40} />}
-        <View style={{ height: 24, paddingHorizontal: 10, borderRadius: 12, backgroundColor: C.white, justifyContent: 'center' }}>
-          <T w="bold" size={12} color={c.openNow ? C.good : C.warn}>{c.openNow ? t('openNow') : `${t('open')} ${c.openingHours.split('-')[0] ?? ''}`}</T>
-        </View>
+        {/* No hours known (null): show nothing rather than guess. */}
+        {c.openNow !== null ? (
+          <View style={{ height: 24, paddingHorizontal: 10, borderRadius: 12, backgroundColor: C.white, justifyContent: 'center' }}>
+            <T w="bold" size={12} color={c.openNow ? C.good : C.warn}>{c.openNow ? t('openNow') : `${t('open')} ${c.openingHours.split('-')[0]}`}</T>
+          </View>
+        ) : null}
       </View>
       <View style={{ padding: 12, paddingHorizontal: 14 }}>
         <T w="heavy" size={17} lines={1} style={{ letterSpacing: -0.3 }}>{c.name}</T>

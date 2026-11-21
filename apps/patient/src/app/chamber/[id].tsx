@@ -40,7 +40,7 @@ export default function Chamber() {
                 </ScrollView>
               ) : <PhotoPlaceholder style={{ flex: 1, paddingTop: ins.top }} size={64} />}
               <View style={{ position: 'absolute', left: 18, bottom: 14, flexDirection: 'row', alignItems: 'center', gap: 8 }}>
-                <Pill text={c.openNow ? t('openNow') : t('closed')} tone={c.openNow ? 'good' : 'warn'} />
+                {c.openNow !== null ? <Pill text={c.openNow ? t('openNow') : t('closed')} tone={c.openNow ? 'good' : 'warn'} /> : null}
               </View>
               {c.photos.length > 1 ? (
                 <View style={{ position: 'absolute', right: 18, bottom: 18, flexDirection: 'row', gap: 5 }}>
